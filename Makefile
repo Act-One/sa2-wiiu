@@ -16,7 +16,8 @@ MAKEFLAGS += --no-print-directory
 
 # Quotes must remain to ensure that paths with spaces are respected
 ROOT_DIR := "$(shell dirname "$(realpath $(firstword $(MAKEFILE_LIST)))")"
-OS       := $(shell uname)
+UNAME_S  := $(shell uname -s 2>/dev/null)
+OS       := $(if $(UNAME_S),$(UNAME_S),$(OS))
 
 ### TOOLCHAIN ###
 
@@ -60,6 +61,14 @@ else ifeq ($(PLATFORM),sdl_psp)
   PREFIX    := psp-
 else ifeq ($(PLATFORM),ps2)
   PREFIX := mips64r5900el-ps2-elf-
+else ifeq ($(PLATFORM),wiiu)
+	TOOLCHAIN := $(DEVKITPPC)
+	ifneq (,$(TOOLCHAIN))
+		ifneq ($(wildcard $(TOOLCHAIN)/bin),)
+			export PATH := $(TOOLCHAIN)/bin:$(PATH)
+		endif
+	endif
+	PREFIX := powerpc-eabi-
 else
 # Native
   ifneq ($(PLATFORM),sdl)
@@ -68,7 +77,7 @@ else
 endif # (PLATFORM == gba)
 
 
-ifeq ($(OS),Windows_NT)
+ifneq ($(filter Windows_NT MINGW% MSYS% CYGWIN%,$(OS)),)
 EXE := .exe
 else
 EXE :=
@@ -137,6 +146,10 @@ else ifeq ($(PLATFORM),ps2)
 ROM      := $(BUILD_NAME).$(PLATFORM).iso
 ELF      := $(ROM:.iso=.elf)
 MAP      := $(ROM:.iso=.map)
+else ifeq ($(PLATFORM),wiiu)
+ROM      := $(BUILD_NAME).rpx
+ELF      := $(BUILD_NAME).wiiu.elf
+MAP      := $(BUILD_NAME).wiiu.map
 else
 ROM      := $(BUILD_NAME).$(PLATFORM).exe
 ELF      := $(ROM:.exe=.elf)
@@ -182,6 +195,8 @@ C_SRCS_IN := $(shell find $(C_SUBDIR) -name "*.c" $(C_SRC_IGNORE_PATHS) -not -pa
 else ifeq ($(PLATFORM),sdl)
 C_SRCS_IN := $(shell find $(C_SUBDIR) -name "*.c" $(C_SRC_IGNORE_PATHS) -not -path "*/platform/win32/*" -not -path "*/platform/ps2/*")
 else ifeq ($(PLATFORM),sdl_psp)
+C_SRCS_IN := $(shell find $(C_SUBDIR) -name "*.c" $(C_SRC_IGNORE_PATHS) -not -path "*/platform/win32/*" -not -path "*/platform/ps2/*")
+else ifeq ($(PLATFORM),wiiu)
 C_SRCS_IN := $(shell find $(C_SUBDIR) -name "*.c" $(C_SRC_IGNORE_PATHS) -not -path "*/platform/win32/*" -not -path "*/platform/ps2/*")
 else ifeq ($(PLATFORM),ps2)
 C_SRCS_IN := $(shell find $(C_SUBDIR) -name "*.c" $(C_SRC_IGNORE_PATHS) -not -path "*/platform/win32/*" -not -path "*/platform/pret_sdl/*")
@@ -269,6 +284,9 @@ else
 	else ifeq ($(PLATFORM),ps2)
 		CC1FLAGS += -G0 -Wno-parentheses-equality -Wno-unused-value -ffast-math
 		CPPFLAGS += -D PLATFORM_GBA=0 -D PLATFORM_SDL=0 -D PLATFORM_WIN32=0 -D_EE -D__PS2__ -I$(PS2SDK)/common/include -I$(PS2SDK)/ee/include -I$(PS2DEV)/gsKit/include -I$(PS2SDK)/ports/include
+	else ifeq ($(PLATFORM),wiiu)
+		CC1FLAGS += -Wno-parentheses-equality -Wno-unused-value -fno-asynchronous-unwind-tables -fno-unwind-tables
+		CPPFLAGS += -D PLATFORM_GBA=0 -D PLATFORM_SDL=1 -D PLATFORM_WIN32=0 -D PLATFORM_WIIU=1 -D SDL_MAIN_HANDLED -I$(DEVKITPRO)/portlibs/wiiu/include/SDL2 -I$(WUT_ROOT)/include
 	else ifeq ($(PLATFORM),sdl_win32)
 		CPPFLAGS += -D TITLE_BAR=$(BUILD_NAME).$(PLATFORM) -D PLATFORM_GBA=0 -D PLATFORM_SDL=1 -D PLATFORM_WIN32=0 $(SDL_MINGW_FLAGS)
 	else ifeq ($(PLATFORM),win32)
@@ -369,6 +387,8 @@ else ifeq ($(PLATFORM),sdl_psp)
     LIBS := -L$(PSPDEV)/psp/lib $(LIBABGSYSCALL_LIBS) -L$(PSPSDK)/lib -lSDL2 -lm -lGL -lpspvram -lpspaudio -lpspvfpu -lpspdisplay -lpspgu -lpspge -lpsphprm -lpspctrl -lpsppower -lpspdebug -lpspnet -lpspnet_apctl -Wl,-zmax-page-size=128
 else ifeq ($(PLATFORM),ps2)
     LIBS := -T$(PS2SDK)/ee/startup/linkfile $(LIBABGSYSCALL_LIBS) -L$(PS2SDK)/common/lib -L$(PS2SDK)/ee/lib -L$(PS2DEV)/gsKit/lib -L$(PS2SDK)/ports/lib -lgskit -ldmakit -lps2_drivers -lmc -lpatches -Wl,-zmax-page-size=128
+else ifeq ($(PLATFORM),wiiu)
+	LIBS := -specs=$(WUT_ROOT)/share/wut.specs -L$(DEVKITPRO)/portlibs/wiiu/lib -L$(WUT_ROOT)/lib $(LIBABGSYSCALL_LIBS) -lSDL2 -lwut -lm
 else ifeq ($(PLATFORM),sdl_win32)
     LIBS := -mwin32 -lkernel32 -lwinmm -lmingw32 -lxinput $(LIBABGSYSCALL_LIBS) $(SDL_MINGW_LIBS)
 else ifeq ($(PLATFORM), win32)
@@ -563,6 +583,14 @@ else ifeq ($(PLATFORM),ps2)
 	@printf "BOOT2 = cdrom0:\\$(PS2_GAME_CODE);1\nVER = 1.00\nVMODE = NTSC" > $(OBJ_DIR)/iso/SYSTEM.CNF
 	@cp $< $(OBJ_DIR)/iso/$(PS2_GAME_CODE)
 	@mkisofs -o $(ROM) $(OBJ_DIR)/iso/
+else ifeq ($(PLATFORM),wiiu)
+	@if command -v elf2rpl >/dev/null 2>&1; then \
+		echo "Creating $(ROM) from $(ELF) with elf2rpl"; \
+		elf2rpl $< $@; \
+	else \
+		echo "elf2rpl not found, copying ELF to $(ROM)"; \
+		cp $< $@; \
+	fi
 else
 	$(OBJCOPY) -O pei-x86-64 $< $@
 endif

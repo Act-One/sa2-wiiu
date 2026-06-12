@@ -431,6 +431,9 @@ static void CreateTitleScreenWithoutIntro(TitleScreen *titleScreen)
 
     gBldRegs.bldCnt = BLDCNT_EFFECT_NONE;
     gFlags &= ~FLAGS_8000;
+    gFlags &= ~FLAGS_EXECUTE_HBLANK_COPY;
+    gHBlankCopyTarget = NULL;
+    gHBlankCopySize = 0;
 
     config40 = &titleScreen->unk40;
     config40->graphics.dest = (void *)BG_SCREEN_ADDR(16);
@@ -449,6 +452,7 @@ static void CreateTitleScreenWithoutIntro(TitleScreen *titleScreen)
     config40->flags = BACKGROUND_FLAGS_BG_ID(1);
 
     DrawBackground(config40);
+    ShowGameLogo(titleScreen);
 
     m4aSongNumStart(MUS_TITLE_FANFARE);
 
@@ -659,6 +663,9 @@ static void Task_IntroFadeOutSegaLogoAnim(void)
         gBldRegs.bldAlpha = FadeOutBlend(16);
         titleScreen->animFrame = 0;
         gFlags &= ~FLAGS_8000;
+        gFlags &= ~FLAGS_EXECUTE_HBLANK_COPY;
+        gHBlankCopyTarget = NULL;
+        gHBlankCopySize = 0;
         gCurTask->main = Task_IntroStartSonicTeamLogoAnim;
     }
 

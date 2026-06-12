@@ -36,17 +36,53 @@ extern "C" {
 
 #include "platform/shared/dma.h"
 #include "platform/shared/video/gpsp_renderer.h"
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+#include "platform/shared/ppc_memory.h"
+#endif
 }
-
-#define eswap16(value) (value)
-#define eswap32(value) (value)
 
 #define GBA_SCREEN_PITCH DISPLAY_WIDTH
 
-#define read_ioreg(regaddr)   (eswap16(*(u16 *)(regaddr)))
+// Portable builds keep emulated IO registers and palette memory in native host
+// order. Tile data and BG tilemap VRAM stay byte-oriented and are read as LE.
+#define read_ioreg(regaddr)   (*(u16 *)(regaddr))
 #define read_ioreg32(regaddr) (read_ioreg(regaddr) | (read_ioreg((regaddr) + sizeof(u16)) << 16))
 
 #define convert_palette(value) (value & 0x7FFF)
+
+static inline u16 read_vram_u16(const void *ptr)
+{
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+    return PpcLoadU16LE(ptr);
+#else
+    return *(const u16 *)ptr;
+#endif
+}
+
+static inline u16 read_palette_color(const u16 *palette, u32 index)
+{
+    return palette[index];
+}
+
+static inline u32 read_tile_u32(const void *ptr)
+{
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+    return PpcLoadU32LE(ptr);
+#else
+    return *(const u32 *)ptr;
+#endif
+}
+
+template <typename pixfmt> static inline pixfmt read_bitmap_pixel(const pixfmt *ptr) { return *ptr; }
+
+template <> inline u16 read_bitmap_pixel<u16>(const u16 *ptr)
+{
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+    return PpcLoadU16LE(ptr);
+#else
+    return *ptr;
+#endif
+}
 
 u16 *gba_screen_pixels = NULL;
 
@@ -208,7 +244,7 @@ static inline void rend_part_tile_Nbpp(u32 bg_comb, u32 px_comb, dtype *dest_ptr
     // Seek to the specified tile, using the tile number and size.
     // tile_base already points to the right tile-line vertical offset
     const u8 *tile_ptr = &tile_base[(tile & 0x3FF) * (is8bpp ? 64 : 32)];
-    u16 bgcolor = paltbl[0];
+    u16 bgcolor = read_palette_color(paltbl, 0);
 
     // On vertical flip, apply the mirror offset
     if (tile & 0x800)
@@ -223,7 +259,7 @@ static inline void rend_part_tile_Nbpp(u32 bg_comb, u32 px_comb, dtype *dest_ptr
             // Alhpa mode stacks previous value (unless rendering the first layer)
             if (pval) {
                 if (rdtype == FULLCOLOR)
-                    *dest_ptr = paltbl[pval];
+                    *dest_ptr = read_palette_color(paltbl, pval);
                 else if (rdtype == INDXCOLOR)
                     *dest_ptr = pval | px_comb; // Add combine flags
                 else if (rdtype == STCKCOLOR)
@@ -240,9 +276,8 @@ static inline void rend_part_tile_Nbpp(u32 bg_comb, u32 px_comb, dtype *dest_ptr
         // In 4bpp mode, the tile[15..12] bits contain the sub-palette number.
         u16 tilepal = (tile >> 12) << 4;
         u16 pxflg = px_comb | tilepal;
-        const u16 *subpal = &paltbl[tilepal];
         // Read packed pixel data, skip start pixels
-        u32 tilepix = eswap32(*(u32 *)tile_ptr);
+        u32 tilepix = read_tile_u32(tile_ptr);
         if (hflip)
             tilepix <<= (start * 4);
         else
@@ -252,7 +287,7 @@ static inline void rend_part_tile_Nbpp(u32 bg_comb, u32 px_comb, dtype *dest_ptr
             u8 pval = hflip ? tilepix >> 28 : tilepix & 0xF;
             if (pval) {
                 if (rdtype == FULLCOLOR)
-                    *dest_ptr = subpal[pval];
+                    *dest_ptr = read_palette_color(paltbl, tilepal + pval);
                 else if (rdtype == INDXCOLOR)
                     *dest_ptr = pxflg | pval;
                 else if (rdtype == STCKCOLOR) // Stack pixels
@@ -278,7 +313,7 @@ static inline void render_tile_Nbpp(u32 bg_comb, u32 px_comb, dtype *dest_ptr, u
                                     const u16 *paltbl)
 {
     const u8 *tile_ptr = &tile_base[(tile & 0x3FF) * (is8bpp ? 64 : 32)];
-    u16 bgcolor = paltbl[0];
+    u16 bgcolor = read_palette_color(paltbl, 0);
 
     if (tile & 0x800)
         tile_ptr += vertical_pixel_flip;
@@ -289,13 +324,13 @@ static inline void render_tile_Nbpp(u32 bg_comb, u32 px_comb, dtype *dest_ptr, u
 
     if (is8bpp) {
         for (u32 j = 0; j < 2; j++) {
-            u32 tilepix = eswap32(((u32 *)tile_ptr)[hflip ? 1 - j : j]);
+            u32 tilepix = read_tile_u32(tile_ptr + ((hflip ? 1 - j : j) * sizeof(u32)));
             if (tilepix) {
                 for (u32 i = 0; i < 4; i++, dest_ptr++) {
                     u8 pval = hflip ? (tilepix >> (24 - i * 8)) : (tilepix >> (i * 8));
                     if (pval) {
                         if (rdtype == FULLCOLOR)
-                            *dest_ptr = paltbl[pval];
+                            *dest_ptr = read_palette_color(paltbl, pval);
                         else if (rdtype == INDXCOLOR)
                             *dest_ptr = pval | px_comb; // Add combine flags
                         else if (rdtype == STCKCOLOR)
@@ -311,16 +346,15 @@ static inline void render_tile_Nbpp(u32 bg_comb, u32 px_comb, dtype *dest_ptr, u
             }
         }
     } else {
-        u32 tilepix = eswap32(*(u32 *)tile_ptr);
+        u32 tilepix = read_tile_u32(tile_ptr);
         if (tilepix) { // We can skip it all if the row is transparent
             u16 tilepal = (tile >> 12) << 4;
             u16 pxflg = px_comb | tilepal;
-            const u16 *subpal = &paltbl[tilepal];
             for (u32 i = 0; i < 8; i++, dest_ptr++) {
                 u8 pval = (hflip ? (tilepix >> ((7 - i) * 4)) : (tilepix >> (i * 4))) & 0xF;
                 if (pval) {
                     if (rdtype == FULLCOLOR)
-                        *dest_ptr = subpal[pval];
+                        *dest_ptr = read_palette_color(paltbl, tilepal + pval);
                     else if (rdtype == INDXCOLOR)
                         *dest_ptr = pxflg | pval;
                     else if (rdtype == STCKCOLOR)
@@ -411,7 +445,7 @@ static void render_scanline_text_fast(u32 layer, u32 start, u32 end, void *scanl
         u32 todraw = MIN(end, partial_hcnt); // [1..7]
         u32 stop = tile_hoff + todraw; // Usually 8, unless short run.
 
-        u16 tile = eswap16(*map_ptr++);
+        u16 tile = read_vram_u16(map_ptr++);
         if (tile & 0x400) // Tile horizontal flip
             rend_part_tile_Nbpp<stype, rdtype, is8bpp, isbase, true>(bg_comb, px_comb, dest_ptr, tile_hoff, stop, tile, tile_base,
                                                                      vflip_off, paltbl);
@@ -431,7 +465,7 @@ static void render_scanline_text_fast(u32 layer, u32 start, u32 end, void *scanl
     u32 todraw = MIN(end, pixel_run) / 8;
 
     for (u32 i = 0; i < todraw; i++, dest_ptr += 8) {
-        u16 tile = eswap16(*map_ptr++);
+        u16 tile = read_vram_u16(map_ptr++);
         if (tile & 0x400) // Tile horizontal flip
             render_tile_Nbpp<stype, rdtype, is8bpp, isbase, true>(bg_comb, px_comb, dest_ptr, tile, tile_base, vflip_off, paltbl);
         else
@@ -457,7 +491,7 @@ static void render_scanline_text_fast(u32 layer, u32 start, u32 end, void *scanl
         // isn't 512 wide
         u8 section = MIN(todraw, 32);
         for (u32 i = 0; i < section; i++, dest_ptr += 8) {
-            u16 tile = eswap16(*map_ptr++);
+            u16 tile = read_vram_u16(map_ptr++);
             if (tile & 0x400) // Tile horizontal flip
                 render_tile_Nbpp<stype, rdtype, is8bpp, isbase, true>(bg_comb, px_comb, dest_ptr, tile, tile_base, vflip_off, paltbl);
             else
@@ -471,7 +505,7 @@ static void render_scanline_text_fast(u32 layer, u32 start, u32 end, void *scanl
 
     // Finalize the tile rendering the left side of it (from 0 up to "end").
     if (end) {
-        u16 tile = eswap16(*map_ptr++);
+        u16 tile = read_vram_u16(map_ptr++);
         if (tile & 0x400) // Tile horizontal flip
             rend_part_tile_Nbpp<stype, rdtype, is8bpp, isbase, true>(bg_comb, px_comb, dest_ptr, 0, end, tile, tile_base, vflip_off,
                                                                      paltbl);
@@ -538,12 +572,12 @@ static void render_scanline_text_mosaic(u32 layer, u32 start, u32 end, void *sca
     // Account for the base offset plus the tile vertical offset
     u8 *tile_base = BG_CHAR_ADDR(tilecntrl) + vert_pix_offset;
 
-    u16 bgcolor = paltbl[0];
+    u16 bgcolor = read_palette_color(paltbl, 0);
 
     // Iterate pixel by pixel, loading data every N pixels to honor mosaic effect
     u8 pval = 0;
     for (u32 i = 0; start < end; start++, i++, dest_ptr++) {
-        u16 tile = eswap16(*map_ptr);
+        u16 tile = read_vram_u16(map_ptr);
 
         if (!(i % mosh)) {
             const u8 *tile_ptr = &tile_base[(tile & 0x3FF) * (is8bpp ? 64 : 32)];
@@ -569,7 +603,7 @@ static void render_scanline_text_mosaic(u32 layer, u32 start, u32 end, void *sca
         if (is8bpp) {
             if (pval) {
                 if (rdtype == FULLCOLOR)
-                    *dest_ptr = paltbl[pval];
+                    *dest_ptr = read_palette_color(paltbl, pval);
                 else if (rdtype == INDXCOLOR)
                     *dest_ptr = pval | px_comb; // Add combine flags
                 else if (rdtype == STCKCOLOR)
@@ -580,10 +614,9 @@ static void render_scanline_text_mosaic(u32 layer, u32 start, u32 end, void *sca
         } else {
             u16 tilepal = (tile >> 12) << 4;
             u16 pxflg = px_comb | tilepal;
-            const u16 *subpal = &paltbl[tilepal];
             if (pval) {
                 if (rdtype == FULLCOLOR)
-                    *dest_ptr = subpal[pval];
+                    *dest_ptr = read_palette_color(paltbl, tilepal + pval);
                 else if (rdtype == INDXCOLOR)
                     *dest_ptr = pxflg | pval;
                 else if (rdtype == STCKCOLOR)
@@ -644,7 +677,7 @@ static inline void rend_pix_8bpp(dsttype *dest_ptr, u8 pval, u32 bg_comb, u32 px
     // Alhpa mode stacks previous value (unless rendering the first layer)
     if (pval) {
         if (rdtype == FULLCOLOR)
-            *dest_ptr = pal[pval];
+            *dest_ptr = read_palette_color(pal, pval);
         else if (rdtype == INDXCOLOR)
             *dest_ptr = pval | px_comb; // Add combine flags
         else if (rdtype == STCKCOLOR)
@@ -653,7 +686,7 @@ static inline void rend_pix_8bpp(dsttype *dest_ptr, u8 pval, u32 bg_comb, u32 px
     } else if (isbase) {
         // Transparent pixel, but we are base layer, so render background.
         if (rdtype == FULLCOLOR)
-            *dest_ptr = pal[0];
+            *dest_ptr = read_palette_color(pal, 0);
         else
             *dest_ptr = 0 | bg_comb; // Just backdrop color and combine flags
     }
@@ -725,7 +758,7 @@ static inline void render_affine_background(u32 layer, u32 start, u32 cnt, const
             }
         }
     } else {
-        u16 bgcol = pal[0];
+        u16 bgcol = read_palette_color(pal, 0);
         if (rotate) {
             // Draw backdrop pixels if necessary until we reach the background edge.
             while (cnt) {
@@ -858,7 +891,7 @@ static inline void bitmap_pixel_write(buftype *dst_ptr, pixfmt val, const u16 *p
         *dst_ptr = convert_palette(val); // Direct color, u16 bitmap
     else if (val) {
         if (rdmode == FULLCOLOR)
-            *dst_ptr = palptr[val];
+            *dst_ptr = read_palette_color(palptr, val);
         else if (rdmode == INDXCOLOR)
             *dst_ptr = val | px_attr; // Add combine flags
         else if (rdmode == STCKCOLOR)
@@ -918,7 +951,7 @@ static inline void render_scanline_bitmap(u32 start, u32 end, void *scanline, co
         for (u32 i = 0; pixcnt; i++, pixcnt--, valptr++) {
             // Pretty much pixel copier
             if (!mosaic || !(i % mosh))
-                val = sizeof(pixfmt) == 2 ? eswap16(*valptr) : *valptr;
+                val = read_bitmap_pixel(valptr);
             bitmap_pixel_write<rdtype, dsttype, mode, pixfmt>(dst_ptr++, val, palptr, px_attr);
         }
     } else if (rdmode == SCALED) {
@@ -944,7 +977,7 @@ static inline void render_scanline_bitmap(u32 start, u32 end, void *scanline, co
 
             if (!mosaic || !(i % mosh)) {
                 pixfmt *valptr = &src_ptr[pixel_x + (pixel_y * width)];
-                val = sizeof(pixfmt) == 2 ? eswap16(*valptr) : *valptr;
+                val = read_bitmap_pixel(valptr);
             }
 
             bitmap_pixel_write<rdtype, dsttype, mode, pixfmt>(dst_ptr++, val, palptr, px_attr);
@@ -973,7 +1006,7 @@ static inline void render_scanline_bitmap(u32 start, u32 end, void *scanline, co
             // Lookup pixel and draw it.
             if (!mosaic || !(i % mosh)) {
                 pixfmt *valptr = &src_ptr[pixel_x + (pixel_y * width)];
-                val = sizeof(pixfmt) == 2 ? eswap16(*valptr) : *valptr;
+                val = read_bitmap_pixel(valptr);
             }
 
             bitmap_pixel_write<rdtype, dsttype, mode, pixfmt>(dst_ptr++, val, palptr, px_attr);
@@ -1021,7 +1054,7 @@ static inline void render_obj_part_tile_Nbpp(u32 px_comb, dsttype *dest_ptr, u32
             // Alhpa mode stacks previous value
             if (pval) {
                 if (rdtype == FULLCOLOR)
-                    *dest_ptr = pal[pval];
+                    *dest_ptr = read_palette_color(pal, pval);
                 else if (rdtype == INDXCOLOR)
                     *dest_ptr = pval | px_attr; // Add combine flags
                 else if (rdtype == STCKCOLOR) {
@@ -1041,10 +1074,9 @@ static inline void render_obj_part_tile_Nbpp(u32 px_comb, dsttype *dest_ptr, u32
             u32 selb = hflip ? (3 - i / 2) : i / 2;
             u32 seln = hflip ? ((i & 1) ^ 1) : (i & 1);
             u8 pval = (tile_ptr[selb] >> (seln * 4)) & 0xF;
-            const u16 *subpal = &pal[palette];
             if (pval) {
                 if (rdtype == FULLCOLOR)
-                    *dest_ptr = subpal[pval];
+                    *dest_ptr = read_palette_color(pal, palette + pval);
                 else if (rdtype == INDXCOLOR)
                     *dest_ptr = pval | px_attr;
                 else if (rdtype == STCKCOLOR) {
@@ -1068,13 +1100,13 @@ static inline void render_obj_tile_Nbpp(u32 px_comb, dsttype *dest_ptr, u32 tile
 
     if (is8bpp) {
         for (u32 j = 0; j < 2; j++) {
-            u32 tilepix = eswap32(((u32 *)tile_ptr)[hflip ? 1 - j : j]);
+            u32 tilepix = read_tile_u32(tile_ptr + ((hflip ? 1 - j : j) * sizeof(u32)));
             if (tilepix) {
                 for (u32 i = 0; i < 4; i++, dest_ptr++) {
                     u8 pval = hflip ? (tilepix >> (24 - i * 8)) : (tilepix >> (i * 8));
                     if (pval) {
                         if (rdtype == FULLCOLOR)
-                            *dest_ptr = pal[pval];
+                            *dest_ptr = read_palette_color(pal, pval);
                         else if (rdtype == INDXCOLOR)
                             *dest_ptr = pval | px_attr; // Add combine flags
                         else if (rdtype == STCKCOLOR) {
@@ -1093,14 +1125,13 @@ static inline void render_obj_tile_Nbpp(u32 px_comb, dsttype *dest_ptr, u32 tile
 #if ENABLE_VRAM_VIEW
         vram_pal_id_buffer[0x800 + (tile_offset >> 5)] = 16 + (palette >> 4);
 #endif
-        u32 tilepix = eswap32(*(u32 *)tile_ptr);
+        u32 tilepix = read_tile_u32(tile_ptr);
         if (tilepix) { // Can skip all pixels if the row is just transparent
             for (u32 i = 0; i < 8; i++, dest_ptr++) {
                 u8 pval = (hflip ? (tilepix >> ((7 - i) * 4)) : (tilepix >> (i * 4))) & 0xF;
-                const u16 *subpal = &pal[palette];
                 if (pval) {
                     if (rdtype == FULLCOLOR)
-                        *dest_ptr = subpal[pval];
+                        *dest_ptr = read_palette_color(pal, palette + pval);
                     else if (rdtype == INDXCOLOR)
                         *dest_ptr = pval | px_attr;
                     else if (rdtype == STCKCOLOR) { // Stack background, replace sprite
@@ -1208,10 +1239,9 @@ static void render_object_mosaic(s32 delta_x, u32 cnt, stype *dst_ptr, u32 base_
         }
 
         // Write the pixel value as required
-        const u16 *subpal = &pal[palette];
         if (pval) {
             if (rdtype == FULLCOLOR)
-                *dst_ptr = is8bpp ? pal[pval] : subpal[pval];
+                *dst_ptr = read_palette_color(pal, is8bpp ? pval : palette + pval);
             else if (rdtype == INDXCOLOR)
                 *dst_ptr = pval | px_attr; // Add combine flags
             else if (rdtype == STCKCOLOR) {
@@ -1237,10 +1267,10 @@ static void render_affine_object(const t_sprite *obji, const t_affp *affp, bool 
     const u32 tile_bwidth = is8bpp ? tile_width_8bpp : tile_width_4bpp;
 
     // Affine params
-    s32 dx = (s16)eswap16(affp->dx);
-    s32 dy = (s16)eswap16(affp->dy);
-    s32 dmx = (s16)eswap16(affp->dmx);
-    s32 dmy = (s16)eswap16(affp->dmy);
+    s32 dx = (s16)affp->dx;
+    s32 dy = (s16)affp->dy;
+    s32 dmx = (s16)affp->dmx;
+    s32 dmy = (s16)affp->dmy;
 
     // Object dimensions and boundaries
     u32 obj_dimw = obji->obj_w;
@@ -1325,7 +1355,7 @@ static void render_affine_object(const t_sprite *obji, const t_affp *affp, bool 
         // Render the pixel value
         if (pixval) {
             if (rdtype == FULLCOLOR)
-                *dst_ptr = palptr[pixval | palette];
+                *dst_ptr = read_palette_color(palptr, pixval | palette);
             else if (rdtype == INDXCOLOR)
                 *dst_ptr = pixval | px_attr; // Add combine flags
             else if (rdtype == STCKCOLOR) {
@@ -1695,8 +1725,8 @@ template <blendtype bldtype, bool st_objs> static void merge_blend(u32 start, u3
             bool do_blend = (pixpair & 0x04000200) == 0x04000200;
             if ((st_objs && force_blend) || (do_blend && bldtype == BLEND_ONLY)) {
                 // Top pixel is 1st target, pixel below is 2nd target. Blend!
-                u16 p1 = PLTT[(pixpair >> 0) & 0x1FF];
-                u16 p2 = PLTT[(pixpair >> 16) & 0x1FF];
+                u16 p1 = read_palette_color(PLTT, (pixpair >> 0) & 0x1FF);
+                u16 p2 = read_palette_color(PLTT, (pixpair >> 16) & 0x1FF);
                 u32 p1e = (p1 | (p1 << 16)) & BLND_MSK;
                 u32 p2e = (p2 | (p2 << 16)) & BLND_MSK;
                 u32 pfe = (((p1e * blend_a) + (p2e * blend_b)) >> 4);
@@ -1714,14 +1744,14 @@ template <blendtype bldtype, bool st_objs> static void merge_blend(u32 start, u3
                 dst[start++] = (pfe >> 16) | pfe;
             } else if ((bldtype == BLEND_DARK || bldtype == BLEND_BRIGHT) && (pixpair & 0x200) == 0x200) {
                 // Top pixel is 1st-target, can still apply bright/dark effect.
-                u16 pidx = PLTT[pixpair & 0x1FF];
+                u16 pidx = read_palette_color(PLTT, pixpair & 0x1FF);
                 u32 epixel = (pidx | (pidx << 16)) & BLND_MSK;
                 u32 pa = bldtype == BLEND_DARK ? 0 : ((BLND_MSK * brightf) >> 4) & BLND_MSK;
                 u32 pb = ((epixel * (16 - brightf)) >> 4) & BLND_MSK;
                 epixel = (pa + pb) & BLND_MSK;
                 dst[start++] = (epixel >> 16) | epixel;
             } else {
-                dst[start++] = PLTT[pixpair & 0x1FF]; // No effects
+                dst[start++] = read_palette_color(PLTT, pixpair & 0x1FF); // No effects
             }
         }
     } else {
@@ -1731,22 +1761,22 @@ template <blendtype bldtype, bool st_objs> static void merge_blend(u32 start, u3
             bool force_blend = (pixpair & 0x04000800) == 0x04000800;
             if ((st_objs && force_blend) || (do_blend && bldtype == BLEND_ONLY)) {
                 // Top pixel is 1st target, pixel below is 2nd target. Blend!
-                u16 p1 = PLTT[(pixpair >> 0) & 0x1FF];
-                u16 p2 = PLTT[(pixpair >> 16) & 0x1FF];
+                u16 p1 = read_palette_color(PLTT, (pixpair >> 0) & 0x1FF);
+                u16 p2 = read_palette_color(PLTT, (pixpair >> 16) & 0x1FF);
                 u32 p1e = (p1 | (p1 << 16)) & BLND_MSK;
                 u32 p2e = (p2 | (p2 << 16)) & BLND_MSK;
                 u32 pfe = (((p1e * blend_a) + (p2e * blend_b)) >> 4) & BLND_MSK;
                 dst[start++] = (pfe >> 16) | pfe;
             } else if ((bldtype == BLEND_DARK || bldtype == BLEND_BRIGHT) && (pixpair & 0x200) == 0x200) {
                 // Top pixel is 1st-target, can still apply bright/dark effect.
-                u16 pidx = PLTT[pixpair & 0x1FF];
+                u16 pidx = read_palette_color(PLTT, pixpair & 0x1FF);
                 u32 epixel = (pidx | (pidx << 16)) & BLND_MSK;
                 u32 pa = bldtype == BLEND_DARK ? 0 : ((BLND_MSK * brightf) >> 4) & BLND_MSK;
                 u32 pb = ((epixel * (16 - brightf)) >> 4) & BLND_MSK;
                 epixel = (pa + pb) & BLND_MSK;
                 dst[start++] = (epixel >> 16) | epixel;
             } else {
-                dst[start++] = PLTT[pixpair & 0x1FF]; // No effects
+                dst[start++] = read_palette_color(PLTT, pixpair & 0x1FF); // No effects
             }
         }
     }
@@ -1759,7 +1789,7 @@ template <blendtype bldtype> static void merge_brightness(u32 start, u32 end, u1
 
     while (start < end) {
         u16 spix = srcdst[start];
-        u16 pixcol = PLTT[spix & 0x1FF];
+        u16 pixcol = read_palette_color(PLTT, spix & 0x1FF);
 
         if ((spix & 0x200) == 0x200) {
             // Pixel is 1st target, can apply color effect.
@@ -1777,7 +1807,7 @@ template <blendtype bldtype> static void merge_brightness(u32 start, u32 end, u1
 // Fills a segment using the backdrop color (in the right mode).
 template <rendtype rdmode, typename dsttype> void fill_line_background(u32 start, u32 end, dsttype *scanline)
 {
-    dsttype bgcol = PLTT[0];
+    dsttype bgcol = read_palette_color(PLTT, 0);
     u16 bg_comb = color_flags(5);
     while (start < end)
         if (rdmode == FULLCOLOR)
@@ -1791,7 +1821,7 @@ template <rendtype rdmode, typename dsttype> void fill_line_background(u32 start
 static void render_backdrop(u32 start, u32 end, u16 *scanline)
 {
     u16 bldcnt = read_ioreg(REG_ADDR_BLDCNT);
-    u16 pixcol = PLTT[0];
+    u16 pixcol = read_palette_color(PLTT, 0);
     u32 effect = (bldcnt >> 6) & 0x03;
     u32 bd_1st_target = ((bldcnt >> 0x5) & 0x01);
 
@@ -2339,8 +2369,8 @@ void gpsp_draw_vram_view(u16 *buffer)
                     u8 colB = (colorId & 0x0F) >> 0;
 
                     u8 paletteId = vram_pal_id_buffer[tileId];
-                    dest[0] = PLTT[paletteId * 16 + colB];
-                    dest[1] = PLTT[paletteId * 16 + colA];
+                    dest[0] = read_palette_color(PLTT, paletteId * 16 + colB);
+                    dest[1] = read_palette_color(PLTT, paletteId * 16 + colA);
                 }
             }
         }

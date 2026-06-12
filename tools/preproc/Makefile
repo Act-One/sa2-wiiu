@@ -10,10 +10,17 @@ HEADERS := asm_file.h c_file.h char_util.h charmap.h preproc.h string_parser.h \
 
 .PHONY: all clean
 
-all: preproc
+HOST_OS := $(shell uname -s 2>/dev/null || echo $(OS))
+ifneq ($(filter Windows_NT MINGW% MSYS% CYGWIN%,$(HOST_OS)),)
+EXE := .exe
+else
+EXE :=
+endif
+
+all: preproc$(EXE)
 	@:
 
-preproc: $(SRCS) $(HEADERS)
+preproc$(EXE): $(SRCS) $(HEADERS)
 	$(CXX) $(CXXFLAGS) $(SRCS) -o $@ $(LDFLAGS)
 
 clean:

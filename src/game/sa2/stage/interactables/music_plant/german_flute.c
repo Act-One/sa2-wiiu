@@ -279,9 +279,18 @@ static void sub_8076D08(Sprite_GermanFlute UNUSED *flute)
 
 void CreateEntity_GermanFlute(MapEntity *me, u16 spriteRegionX, u16 spriteRegionY, u8 spriteY)
 {
-    Task *t = TaskCreate(Task_GermanFlute, sizeof(Sprite_GermanFlute), 0x2010, 0, TaskDestructor_GermanFlute);
-    Sprite_GermanFlute *flute = TASK_DATA(t);
+    s32 kind = me->d.sData[0];
+    Task *t;
+    Sprite_GermanFlute *flute;
     s32 posX, posY;
+
+    if (kind < 0 || kind >= NUM_GERMAN_FLUTE_KINDS) {
+        SET_MAP_ENTITY_INITIALIZED(me);
+        return;
+    }
+
+    t = TaskCreate(Task_GermanFlute, sizeof(Sprite_GermanFlute), 0x2010, 0, TaskDestructor_GermanFlute);
+    flute = TASK_DATA(t);
 
     posX = TO_WORLD_POS(me->x, spriteRegionX);
     flute->posX = posX + (TILE_WIDTH / 2);
@@ -291,7 +300,7 @@ void CreateEntity_GermanFlute(MapEntity *me, u16 spriteRegionX, u16 spriteRegion
 
     flute->unk8 = 0;
     flute->unkA = 0;
-    flute->kind = me->d.sData[0];
+    flute->kind = kind;
     flute->me = me;
     flute->spriteX = me->x;
     flute->spriteY = spriteY;

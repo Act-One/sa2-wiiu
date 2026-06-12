@@ -27,6 +27,12 @@ typedef struct {
     unsigned int pos_offsets[1]; // size: .width * .height
 } EntitiesHeader;
 
+static unsigned int ReadU32LE(const void *ptr)
+{
+    const unsigned char *bytes = ptr;
+    return (unsigned int)bytes[0] | ((unsigned int)bytes[1] << 8) | ((unsigned int)bytes[2] << 16) | ((unsigned int)bytes[3] << 24);
+}
+
 typedef struct {
     char *name;
     int id;
@@ -719,7 +725,7 @@ void ConvertBinaryToCsv(char* bin_path, char *csv_path, char *c_header_path, Gam
     File file = OpenWholeFile(bin_path);
 
     if(file.data && (file.size > 4)) {
-        int uncomp_size = *((u32*)file.data) >> 8;
+        int uncomp_size = ReadU32LE(file.data) >> 8;
 
         if(uncomp_size == file.size)
         {

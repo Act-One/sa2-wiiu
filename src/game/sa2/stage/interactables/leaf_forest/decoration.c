@@ -34,8 +34,18 @@ void CreateEntity_Decoration(MapEntity *me, u16 regionX, u16 regionY, u8 spriteY
     Task *t;
     Sprite_Decoration *base;
     Sprite *s;
+    s32 decoKind = me->decoId;
 
-    if (me->decoId >= 0) {
+    if (decoKind < 0) {
+        return;
+    }
+
+    if (decoKind >= ARRAY_COUNT(sDecoTileAnimInfo)) {
+        SET_MAP_ENTITY_INITIALIZED(me);
+        return;
+    }
+
+    if (decoKind >= 0) {
         t = TaskCreate(Task_Decoration, sizeof(Sprite_Decoration), 0x2010, 0, TaskDestructor_Decoration);
         base = TASK_DATA(t);
         s = &base->displayed;
@@ -51,9 +61,9 @@ void CreateEntity_Decoration(MapEntity *me, u16 regionX, u16 regionY, u8 spriteY
         s->y = TO_WORLD_POS(me->y, regionY);
         SET_MAP_ENTITY_INITIALIZED(me);
 
-        s->graphics.dest = VramMalloc(sDecoTileAnimInfo[me->decoId].numTiles);
-        s->graphics.anim = sDecoTileAnimInfo[me->decoId].anim;
-        s->variant = sDecoTileAnimInfo[me->decoId].variant;
+        s->graphics.dest = VramMalloc(sDecoTileAnimInfo[decoKind].numTiles);
+        s->graphics.anim = sDecoTileAnimInfo[decoKind].anim;
+        s->variant = sDecoTileAnimInfo[decoKind].variant;
 
         s->oamFlags = SPRITE_OAM_ORDER(28);
         s->graphics.size = 0;

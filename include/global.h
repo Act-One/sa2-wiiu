@@ -327,11 +327,23 @@ typedef struct {
 } Vec2_32;
 
 typedef struct {
-    u8 reserved : 4;
-    u8 compressedType : 4;
-    u32 size : 24;
-    void *data;
+    u8 header[4];
 } RLCompressed;
+
+static inline u8 RLCompressedReserved(const RLCompressed *compressed)
+{
+    return compressed->header[0] & 0xF;
+}
+
+static inline u8 RLCompressedType(const RLCompressed *compressed)
+{
+    return compressed->header[0] >> 4;
+}
+
+static inline u32 RLCompressedSize(const RLCompressed *compressed)
+{
+    return (u32)compressed->header[1] | ((u32)compressed->header[2] << 8) | ((u32)compressed->header[3] << 16);
+}
 
 // TODO: Should this be in a GBA-specific header file?
 #define NUM_AFFINE_BACKGROUNDS 2

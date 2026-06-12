@@ -107,12 +107,19 @@ static const u16 sUnknown_080DFB90[DASH_RING__NUM_ORIENTATIONS][6] = {
 
 void CreateEntity_DashRing(MapEntity *me, u16 spriteRegionX, u16 spriteRegionY, u8 spriteY)
 {
+    s32 orientation = me->d.sData[0];
     u32 ringType = DASH_RING__TYPE_REGULAR;
+    Task *t;
+    Sprite_DashRing *ring;
 
-    Task *t = TaskCreate(Task_Interactable_DashRing, sizeof(Sprite_DashRing), 0x2010, 0, TaskDestructor_Interactable_DashRing);
+    if (orientation < 0 || orientation >= DASH_RING__NUM_ORIENTATIONS) {
+        SET_MAP_ENTITY_INITIALIZED(me);
+        return;
+    }
 
-    Sprite_DashRing *ring = TASK_DATA(t);
-    ring->orientation = me->d.sData[0];
+    t = TaskCreate(Task_Interactable_DashRing, sizeof(Sprite_DashRing), 0x2010, 0, TaskDestructor_Interactable_DashRing);
+    ring = TASK_DATA(t);
+    ring->orientation = orientation;
     ring->posX = TO_WORLD_POS(me->x, spriteRegionX);
     ring->posY = TO_WORLD_POS(me->y, spriteRegionY);
     ring->spriteX = me->x;

@@ -8,7 +8,7 @@
 
 #include "platform/platform.h"
 
-#if !PLATFORM_GBA && (RENDERER != RENDERER_SOFTWARE)
+#if !PLATFORM_GBA && defined(USE_PLATFORM_RENDERER)
 extern void Platform_DisplaySprite(Sprite *sprite, u8 oamPaletteNum);
 extern void Platform_TransformSprite(Sprite *sprite, SpriteTransform *transform);
 #endif
@@ -394,7 +394,7 @@ NONMATCH("asm/non_matching/engine/TransformSprite.inc", void TransformSprite(Spr
     // sp24 = s
     UnkSpriteStruct big;
     const SpriteOffset *dimensions = s->dimensions;
-#if PORTABLE && (RENDERER != RENDERER_SOFTWARE)
+#if PORTABLE && defined(USE_PLATFORM_RENDERER)
     Platform_TransformSprite(s, transform);
     return;
 #endif
@@ -726,7 +726,7 @@ void DisplaySprite(Sprite *sprite)
                 oam->split.paletteNum += sprite->palId;
 #endif
 
-#if !PLATFORM_GBA && (RENDERER != RENDERER_SOFTWARE)
+#if !PLATFORM_GBA && defined(USE_PLATFORM_RENDERER)
                 // TEMP
                 // Quick hack for getting output in OpenGL test
                 // The whole function call should be replaced by this!

@@ -37,12 +37,12 @@ const PipeSegment gPipeHornPipeSequence0[] = {
     {
         .type = PIPE_SEGMENT_TYPE_TRANSLATE,
         .step = 34,
-        { .translate = { .dX = Q(8.0), .dY = Q(0.0) } },
+        { .translate = { .dX = Q_8_8(8.0), .dY = Q_8_8(0.0) } },
     },
     {
         .type = PIPE_SEGMENT_TYPE_TRANSLATE,
         .step = 204,
-        { ._16 = Q(80.0), Q(0.0) },
+        { .translate = { .dX = Q_8_8(80.0), .dY = Q_8_8(0.0) } },
     },
     {
         2,
@@ -308,18 +308,26 @@ static const u16 sExitSounds[10] = {
     SE_MUSIC_PLANT_EXIT_HORN2, SE_MUSIC_PLANT_HORN3, SE_MUSIC_PLANT_EXIT_HORN2, SE_MUSIC_PLANT_HORN3, MUS_DUMMY,
 };
 
+static bool32 PipeHorn_IsKindValid(u16 kind)
+{
+    return kind < ARRAY_COUNT(gUnknown_08C8793C) && kind < ARRAY_COUNT(sExitSpeeds) && kind < ARRAY_COUNT(sExitRotations)
+        && kind < ARRAY_COUNT(sExitSounds) && gUnknown_08C8793C[kind] != NULL;
+}
+
 static void sub_80777C8(Sprite_PipeHorn *pipe)
 {
+    u16 kind = PipeHorn_IsKindValid(pipe->kind) ? pipe->kind : 0;
+
     Player_ClearMovestate_IsInScriptedSequence();
 
     gPlayer.moveState &= ~MOVESTATE_IA_OVERRIDE;
     gPlayer.transition = PLTRANS_UNCURL;
 
-    gPlayer.qSpeedAirX = sExitSpeeds[pipe->kind][0];
-    gPlayer.qSpeedAirY = sExitSpeeds[pipe->kind][1];
-    gPlayer.rotation = sExitRotations[pipe->kind];
+    gPlayer.qSpeedAirX = sExitSpeeds[kind][0];
+    gPlayer.qSpeedAirY = sExitSpeeds[kind][1];
+    gPlayer.rotation = sExitRotations[kind];
 
-    m4aSongNumStart(sExitSounds[pipe->kind]);
+    m4aSongNumStart(sExitSounds[kind]);
 
     gCurTask->main = Task_Idle;
 }
@@ -406,10 +414,19 @@ static void Despawn(Sprite_PipeHorn *pipe)
 
 void CreateEntity_PipeInstrument_Entry(MapEntity *me, u16 spriteRegionX, u16 spriteRegionY, u8 spriteY)
 {
-    Task *t = TaskCreate(Task_Idle, sizeof(Sprite_PipeHorn), 0x2010, 0, TaskDestructor_PipeHorn);
-    Sprite_PipeHorn *pipe = TASK_DATA(t);
+    u16 kind = me->d.uData[0];
+    Task *t;
+    Sprite_PipeHorn *pipe;
 
-    pipe->kind = me->d.sData[0];
+    if (!PipeHorn_IsKindValid(kind)) {
+        SET_MAP_ENTITY_INITIALIZED(me);
+        return;
+    }
+
+    t = TaskCreate(Task_Idle, sizeof(Sprite_PipeHorn), 0x2010, 0, TaskDestructor_PipeHorn);
+    pipe = TASK_DATA(t);
+
+    pipe->kind = kind;
     pipe->me = me;
 
     pipe->spriteX = me->x;
@@ -432,6 +449,11 @@ static void Task_Active(void)
     gPlayer.rotation = 0;
     gPlayer.qSpeedAirX = 1;
     gPlayer.qSpeedAirY = 0;
+
+    if (!PipeHorn_IsKindValid(pipe->kind)) {
+        sub_80777C8(pipe);
+        return;
+    }
 
     if (IncrementPipeSequence(&pipe->pipeSequence, gUnknown_08C8793C[pipe->kind]) == 0) {
         sub_80777C8(pipe);

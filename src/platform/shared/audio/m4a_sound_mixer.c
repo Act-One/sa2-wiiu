@@ -5,12 +5,73 @@
 #include "platform/platform.h"
 #include "platform/shared/audio/cgb_audio.h"
 
+#ifdef PLATFORM_WIIU
+#include <coreinit/debug.h>
+#include "platform/shared/ppc_memory.h"
+
+extern u32 gFrameCount;
+#define WIIU_M4A_TRACE_FRAME_WINDOW 90
+#define WIIU_M4A_TRACE_INTERVAL     300
+#define WIIU_M4A_EVENT_TRACE_LIMIT  256
+#define WIIU_M4A_NOTE_TRACE_LIMIT   128
+static u32 sWiiUM4AEventTraceCount = 0;
+static u32 sWiiUM4ANoteTraceCount = 0;
+#define WIIU_M4A_LOG(fmt, ...) OSReport("[sa2-wiiu][m4a] " fmt "\n", ##__VA_ARGS__)
+
+static bool32 WiiUM4AShouldTraceFrame(void)
+{
+    return (gFrameCount < WIIU_M4A_TRACE_FRAME_WINDOW) || ((gFrameCount % WIIU_M4A_TRACE_INTERVAL) == 0);
+}
+
+static bool32 WiiUM4AShouldTraceEvent(void)
+{
+    return sWiiUM4AEventTraceCount < WIIU_M4A_EVENT_TRACE_LIMIT;
+}
+
+static bool32 WiiUM4AShouldTraceNote(void)
+{
+    return sWiiUM4ANoteTraceCount < WIIU_M4A_NOTE_TRACE_LIMIT;
+}
+#else
+#define WIIU_M4A_LOG(fmt, ...) ((void)0)
+#define WiiUM4AShouldTraceFrame() 0
+#define WiiUM4AShouldTraceEvent() 0
+#define WiiUM4AShouldTraceNote() 0
+#endif
+
 static inline void GenerateAudio(struct SoundMixerState *mixer, struct MixerSource *chan, struct WaveData *wav, fixed8_24 *pcmBuffer,
                                  u16 samplesPerFrame, float sampleRateReciprocal);
 static void SampleMixer(struct SoundMixerState *mixer, u32 scanlineLimit, u16 samplesPerFrame, fixed8_24 *pcmBuffer, u8 dmaCounter,
                         u16 maxBufSize);
 static inline bool32 TickEnvelope(struct MixerSource *chan, struct WaveData *wav);
 static void ChnVolSetAsm(struct MixerSource *chan, struct MP2KTrack *track);
+
+static inline u16 WaveDataStatus(const struct WaveData *wav)
+{
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+    return PpcLoadU16LE(&wav->status);
+#else
+    return wav->status;
+#endif
+}
+
+static inline u32 WaveDataLoopStart(const struct WaveData *wav)
+{
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+    return PpcLoadU32LE(&wav->loopStart);
+#else
+    return wav->loopStart;
+#endif
+}
+
+static inline u32 WaveDataSampleCount(const struct WaveData *wav)
+{
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+    return PpcLoadU32LE(&wav->size);
+#else
+    return wav->size;
+#endif
+}
 
 #define VCOUNT_VBLANK   160
 #define TOTAL_SCANLINES 228
@@ -29,6 +90,39 @@ static s16 audioBuffer[PCM_DMA_BUF_SIZE];
 static struct SoundMixerState sSoundInfo = { 0 };
 struct SoundMixerState *SOUND_INFO_PTR = &sSoundInfo;
 
+#ifdef PLATFORM_WIIU
+#define PORTABLE_AUDIO_OUTPUT_GAIN 16
+#else
+#define PORTABLE_AUDIO_OUTPUT_GAIN 1
+#endif
+
+#define PORTABLE_AUDIO_HEADROOM_SHIFT 3
+
+static inline s16 ClampS16(s64 sample)
+{
+    if (sample > 32767) {
+        return 32767;
+    } else if (sample < -32768) {
+        return -32768;
+    }
+
+    return (s16)sample;
+}
+
+static inline s16 MixAudioSampleToS16(fixed8_24 m4aSample, fixed8_24 cgbSample)
+{
+    s64 sample = (s64)m4aSample + cgbSample;
+    sample = (sample * PORTABLE_AUDIO_OUTPUT_GAIN) >> PORTABLE_AUDIO_HEADROOM_SHIFT;
+    return ClampS16(sample >> 9);
+}
+
+static inline fixed8_24 RomSamplesPerOutputSample(const struct SoundMixerState *mixer, const struct MixerSource *chan,
+                                                  float sampleRateReciprocal)
+{
+    (void)mixer;
+    return float_to_fp8_24(chan->data.sound.freq * sampleRateReciprocal);
+}
+
 void SoundMain(void)
 {
 #if !ENABLE_AUDIO
@@ -37,6 +131,9 @@ void SoundMain(void)
     struct SoundMixerState *mixer = SOUND_INFO_PTR;
 
     if (mixer->lockStatus != ID_NUMBER) {
+        if (WiiUM4AShouldTraceFrame()) {
+            WIIU_M4A_LOG("SoundMain skip frame=%u mixer=%08x lock=%08x", gFrameCount, (u32)(uintptr_t)mixer, mixer->lockStatus);
+        }
         return;
     }
     mixer->lockStatus++;
@@ -51,7 +148,15 @@ void SoundMain(void)
     }
 
     if (mixer->MPlayMainHead != NULL) {
+        if (WiiUM4AShouldTraceFrame()) {
+            WIIU_M4A_LOG("SoundMain players begin frame=%u mixer=%08x head=%08x player=%08x dma=%u samples=%d",
+                         gFrameCount, (u32)(uintptr_t)mixer, (u32)(uintptr_t)mixer->MPlayMainHead,
+                         (u32)(uintptr_t)mixer->musicPlayerHead, mixer->dmaCounter, mixer->samplesPerFrame);
+        }
         mixer->MPlayMainHead(mixer->musicPlayerHead);
+        if (WiiUM4AShouldTraceFrame()) {
+            WIIU_M4A_LOG("SoundMain players end frame=%u mixer=%08x", gFrameCount, (u32)(uintptr_t)mixer);
+        }
     }
 
     mixer->CgbSound();
@@ -216,12 +321,14 @@ static inline bool32 TickEnvelope(struct MixerSource *chan, struct WaveData *wav
         return FALSE;
     } else {
         // Init channel
+        u32 sampleCount = WaveDataSampleCount(wav);
+
         chan->status = 3;
         chan->current = wav->data;
-        chan->data.sound.ct = wav->size;
+        chan->data.sound.ct = sampleCount;
         chan->data.sound.fw = 0;
         chan->data.sound.envelopeVol = 0;
-        if ((wav->status >> 8) & 0xC0) {
+        if ((WaveDataStatus(wav) >> 8) & 0xC0) {
             chan->status |= 0x10;
         }
         goto attack;
@@ -238,8 +345,11 @@ static inline void GenerateAudio(struct SoundMixerState *mixer, struct MixerSour
     s32 loopLen = 0;
     s8 *loopStart;
     if (chan->status & 0x10) {
-        loopStart = wav->data + wav->loopStart;
-        loopLen = wav->size - wav->loopStart;
+        u32 loopStartOffset = WaveDataLoopStart(wav);
+        u32 sampleCount = WaveDataSampleCount(wav);
+
+        loopStart = wav->data + loopStartOffset;
+        loopLen = sampleCount - loopStartOffset;
     }
     s32 samplesLeftInWav = chan->data.sound.ct;
     s8 *current = chan->current;
@@ -271,7 +381,7 @@ static inline void GenerateAudio(struct SoundMixerState *mixer, struct MixerSour
         chan->current = current;
     } else {
         fixed8_24 finePos = chan->data.sound.fw;
-        fixed8_24 romSamplesPerOutputSample = float_to_fp8_24(chan->data.sound.freq * sampleRateReciprocal);
+        fixed8_24 romSamplesPerOutputSample = RomSamplesPerOutputSample(mixer, chan, sampleRateReciprocal);
 
         s16 b = current[0];
         s16 m = current[1] - b;
@@ -355,6 +465,37 @@ void MP2KClearChain(struct MixerSource *chan)
 
 static u8 ConsumeTrackByte(struct MP2KTrack *track) { return *track->cmdPtr++; }
 
+static uintptr_t ReadMPlayPointer(const u8 *cmdPtr)
+{
+    uintptr_t addr = 0;
+
+    // MPlay pointers are emitted by mPtr, so they use the native target byte order.
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+    for (size_t i = 0; i < sizeof(uintptr_t); i++) {
+        addr = (addr << 8) | cmdPtr[i];
+    }
+#else
+    for (size_t i = sizeof(uintptr_t); i > 0; i--) {
+        addr = (addr << 8) | cmdPtr[i - 1];
+    }
+#endif
+
+    return addr;
+}
+
+#ifdef PLATFORM_WIIU
+static uintptr_t ReadMPlayPointerLittleEndian(const u8 *cmdPtr)
+{
+    uintptr_t addr = 0;
+
+    for (size_t i = sizeof(uintptr_t); i > 0; i--) {
+        addr = (addr << 8) | cmdPtr[i - 1];
+    }
+
+    return addr;
+}
+#endif
+
 void MPlayJumpTableCopy(void **mplayJumpTable)
 {
     for (u8 i = 0; i < 36; i++) {
@@ -379,12 +520,15 @@ void MP2K_event_fine(struct MP2KPlayerState *unused, struct MP2KTrack *track)
 void MP2K_event_goto(struct MP2KPlayerState *unused, struct MP2KTrack *track)
 {
     u8 *cmdPtr = track->cmdPtr;
-    uintptr_t addr = 0;
-    for (size_t i = sizeof(uintptr_t) - 1; i > 0; i--) {
-        addr |= cmdPtr[i];
-        addr <<= 8;
+    uintptr_t addr = ReadMPlayPointer(cmdPtr);
+#ifdef PLATFORM_WIIU
+    uintptr_t littleEndianAddr = ReadMPlayPointerLittleEndian(cmdPtr);
+    if (WiiUM4AShouldTraceEvent()) {
+        WIIU_M4A_LOG("goto frame=%u track=%08x bytes=%02x %02x %02x %02x native=%08x le=%08x",
+                     gFrameCount, (u32)(uintptr_t)track, cmdPtr[0], cmdPtr[1], cmdPtr[2], cmdPtr[3], (u32)addr,
+                     (u32)littleEndianAddr);
     }
-    addr |= *cmdPtr;
+#endif
     track->cmdPtr = (u8 *)addr;
 }
 
@@ -455,6 +599,12 @@ void MP2K_event_voice(struct MP2KPlayerState *player, struct MP2KTrack *track)
     u8 voice = *(track->cmdPtr++);
     struct MP2KVoiceGroup *voicegroup = &player->voicegroup[voice];
     track->voicegroup = *voicegroup;
+
+    if (WiiUM4AShouldTraceNote()) {
+        WIIU_M4A_LOG("voice #%u player=%08x track=%08x voice=%u type=%02x vg=%08x data=%08x",
+                     sWiiUM4ANoteTraceCount++, (u32)(uintptr_t)player, (u32)(uintptr_t)track, voice, voicegroup->type,
+                     (u32)(uintptr_t)voicegroup, (u32)(uintptr_t)voicegroup->data.sound.wav);
+    }
 }
 
 void MP2K_event_vol(struct MP2KPlayerState *unused, struct MP2KTrack *track)
@@ -510,11 +660,27 @@ void MP2KPlayerMain(struct MP2KPlayerState *player)
     struct SoundMixerState *mixer = SOUND_INFO_PTR;
 
     if (player->lockStatus != ID_NUMBER) {
+        if (WiiUM4AShouldTraceFrame()) {
+            WIIU_M4A_LOG("player skip frame=%u player=%08x lock=%08x status=%08x",
+                         gFrameCount, (u32)(uintptr_t)player, player->lockStatus, player->status);
+        }
         return;
     }
     player->lockStatus++;
 
+    if (WiiUM4AShouldTraceFrame()) {
+        WIIU_M4A_LOG("player begin frame=%u player=%08x status=%08x tracks=%u tempo=%u/%u nextFunc=%08x next=%08x song=%08x",
+                     gFrameCount, (u32)(uintptr_t)player, player->status, player->trackCount, player->tempoCounter,
+                     player->tempoInterval, (u32)(uintptr_t)player->nextPlayerFunc, (u32)(uintptr_t)player->nextPlayer,
+                     (u32)(uintptr_t)player->songHeader);
+    }
+
     if (player->nextPlayerFunc != NULL) {
+        if (WiiUM4AShouldTraceFrame()) {
+            WIIU_M4A_LOG("player recurse frame=%u player=%08x nextFunc=%08x next=%08x",
+                         gFrameCount, (u32)(uintptr_t)player, (u32)(uintptr_t)player->nextPlayerFunc,
+                         (u32)(uintptr_t)player->nextPlayer);
+        }
         player->nextPlayerFunc(player->nextPlayer);
     }
 
@@ -558,6 +724,13 @@ void MP2KPlayerMain(struct MP2KPlayerState *player)
             }
 
             while (currentTrack->wait == 0) {
+                if (WiiUM4AShouldTraceEvent()) {
+                    WIIU_M4A_LOG("cmd fetch #%u frame=%u player=%08x track=%u trackPtr=%08x status=%02x run=%02x cmdPtr=%08x",
+                                 sWiiUM4AEventTraceCount, gFrameCount, (u32)(uintptr_t)player, i,
+                                 (u32)(uintptr_t)currentTrack, currentTrack->status, currentTrack->runningStatus,
+                                 (u32)(uintptr_t)currentTrack->cmdPtr);
+                    sWiiUM4AEventTraceCount++;
+                }
                 u8 event = *currentTrack->cmdPtr;
                 if (event < 0x80) {
                     event = currentTrack->runningStatus;
@@ -569,16 +742,31 @@ void MP2KPlayerMain(struct MP2KPlayerState *player)
                 }
 
                 if (event >= 0xCF) {
+                    if (WiiUM4AShouldTraceEvent()) {
+                        WIIU_M4A_LOG("cmd note frame=%u player=%08x track=%u event=%02x next=%08x",
+                                     gFrameCount, (u32)(uintptr_t)player, i, event,
+                                     (u32)(uintptr_t)currentTrack->cmdPtr);
+                    }
                     mixer->plynote(event - 0xCF, player, currentTrack);
                 } else if (event >= 0xB1) {
                     player->cmd = event - 0xB1;
                     MP2KEventFunc eventFunc = mixer->MPlayJumpTable[player->cmd];
+                    if (WiiUM4AShouldTraceEvent()) {
+                        WIIU_M4A_LOG("cmd event frame=%u player=%08x track=%u event=%02x func=%08x next=%08x",
+                                     gFrameCount, (u32)(uintptr_t)player, i, event, (u32)(uintptr_t)eventFunc,
+                                     (u32)(uintptr_t)currentTrack->cmdPtr);
+                    }
                     eventFunc(player, currentTrack);
 
                     if (currentTrack->status == 0) {
                         goto nextTrack;
                     }
                 } else {
+                    if (WiiUM4AShouldTraceEvent()) {
+                        WIIU_M4A_LOG("cmd wait frame=%u player=%08x track=%u event=%02x wait=%u next=%08x",
+                                     gFrameCount, (u32)(uintptr_t)player, i, event, gClockTable[event - 0x80],
+                                     (u32)(uintptr_t)currentTrack->cmdPtr);
+                    }
                     currentTrack->wait = gClockTable[event - 0x80];
                 }
             }
@@ -649,21 +837,27 @@ void MP2KPlayerMain(struct MP2KPlayerState *player)
                 }
             }
             if (track->status & MPT_FLG_PITCHG) {
-                s32 key = chan->data.sound.key + track->keyShiftCalculated;
+                s32 key = chan->data.sound.key;
+                u8 pitchCalculated = track->pitchCalculated;
+                key += track->keyShiftCalculated;
                 if (key < 0) {
                     key = 0;
                 }
                 if (cgbType != 0) {
-                    chan->data.cgb.freq = mixer->MidiKeyToCgbFreq(cgbType, key, track->pitchCalculated);
+                    chan->data.cgb.freq = mixer->MidiKeyToCgbFreq(cgbType, key, pitchCalculated);
                     chan->data.cgb.cgbStatus |= 0x2;
                 } else {
-                    chan->data.sound.freq = MidiKeyToFreq(chan->wav, key, track->pitchCalculated);
+                    chan->data.sound.freq = MidiKeyToFreq(chan->wav, key, pitchCalculated);
                 }
             }
         }
         track->status &= ~0xF;
     } while (++i < player->trackCount);
 returnEarly:;
+    if (WiiUM4AShouldTraceFrame()) {
+        WIIU_M4A_LOG("player end frame=%u player=%08x status=%08x tempo=%u",
+                     gFrameCount, (u32)(uintptr_t)player, player->status, player->tempoCounter);
+    }
     player->lockStatus = ID_NUMBER;
 }
 
@@ -738,6 +932,13 @@ void MP2K_event_nxx(u8 clock, struct MP2KPlayerState *player, struct MP2KTrack *
 
         voicegroup = voicegroup->data.keySplit.group + voicegroupIndex;
         if (voicegroup->type & (TONEDATA_TYPE_RHY | TONEDATA_TYPE_SPL)) {
+#ifdef PLATFORM_WIIU
+            if (WiiUM4AShouldTraceNote()) {
+                WIIU_M4A_LOG("note-drop-split #%u player=%08x track=%08x type=%02x key=%u vg=%08x idx=%u nested=%02x",
+                             sWiiUM4ANoteTraceCount++, (u32)(uintptr_t)player, (u32)(uintptr_t)track, type, track->key,
+                             (u32)(uintptr_t)voicegroup, voicegroupIndex, voicegroup->type);
+            }
+#endif
             return;
         }
         if (type & TONEDATA_TYPE_RHY) {
@@ -755,10 +956,18 @@ void MP2K_event_nxx(u8 clock, struct MP2KPlayerState *player, struct MP2KTrack *
     }
 
     u8 cgbType = voicegroup->type & TONEDATA_TYPE_CGB;
+
     struct MixerSource *chan;
 
     if (cgbType != 0) {
         if (mixer->cgbChans == NULL) {
+#ifdef PLATFORM_WIIU
+            if (WiiUM4AShouldTraceNote()) {
+                WIIU_M4A_LOG("note-drop-cgb #%u player=%08x track=%08x type=%02x key=%u cgb=%u reason=no-cgb-chans",
+                             sWiiUM4ANoteTraceCount++, (u32)(uintptr_t)player, (u32)(uintptr_t)track, voicegroup->type, key,
+                             cgbType);
+            }
+#endif
             return;
         }
         // There's only one CgbChannel of a given type, so we don't need to loop to find it.
@@ -768,6 +977,13 @@ void MP2K_event_nxx(u8 clock, struct MP2KPlayerState *player, struct MP2KTrack *
         if ((chan->status & SOUND_CHANNEL_SF_ON) && (chan->status & SOUND_CHANNEL_SF_STOP) == 0) {
             // then make sure this note is higher priority (or same priority but from a later track).
             if (chan->data.sound.priority > priority || (chan->data.sound.priority == priority && chan->track < track)) {
+#ifdef PLATFORM_WIIU
+                if (WiiUM4AShouldTraceNote()) {
+                    WIIU_M4A_LOG("note-drop-cgb #%u player=%08x track=%08x type=%02x key=%u cgb=%u reason=priority chanPrio=%u notePrio=%u chanTrack=%08x",
+                                 sWiiUM4ANoteTraceCount++, (u32)(uintptr_t)player, (u32)(uintptr_t)track, voicegroup->type, key,
+                                 cgbType, chan->data.sound.priority, priority, (u32)(uintptr_t)chan->track);
+                }
+#endif
                 return;
             }
         }
@@ -811,6 +1027,11 @@ void MP2K_event_nxx(u8 clock, struct MP2KPlayerState *player, struct MP2KTrack *
     }
 
     if (chan == NULL) {
+        if (WiiUM4AShouldTraceNote()) {
+            WIIU_M4A_LOG("note-drop #%u player=%08x track=%08x type=%02x key=%u prio=%u chans=%u",
+                         sWiiUM4ANoteTraceCount++, (u32)(uintptr_t)player, (u32)(uintptr_t)track, voicegroup->type, key,
+                         priority, mixer->numChans);
+        }
         return;
     }
 
@@ -848,6 +1069,7 @@ void MP2K_event_nxx(u8 clock, struct MP2KPlayerState *player, struct MP2KTrack *
 
     // Avoid promoting keyShiftCalculated to u8 by splitting the addition into a separate statement
     s16 transposedKey = chan->data.sound.key;
+    u8 pitchCalculated = track->pitchCalculated;
     transposedKey += track->keyShiftCalculated;
     if (transposedKey < 0) {
         transposedKey = 0;
@@ -862,9 +1084,26 @@ void MP2K_event_nxx(u8 clock, struct MP2KPlayerState *player, struct MP2KTrack *
             chan->data.cgb.sweep = voicegroup->pan_sweep;
         }
 
-        chan->data.cgb.freq = mixer->MidiKeyToCgbFreq(cgbType, transposedKey, track->pitchCalculated);
+        chan->data.cgb.freq = mixer->MidiKeyToCgbFreq(cgbType, transposedKey, pitchCalculated);
+#ifdef PLATFORM_WIIU
+        if (WiiUM4AShouldTraceNote()) {
+            WIIU_M4A_LOG("note-cgb #%u player=%08x track=%08x chan=%u type=%02x cgb=%u key=%u transposed=%u prio=%u freq=%u len=%u sweep=%u status=%02x",
+                         sWiiUM4ANoteTraceCount++, (u32)(uintptr_t)player, (u32)(uintptr_t)track,
+                         (u32)(chan - mixer->cgbChans), chan->type, cgbType, key, transposedKey, priority, chan->data.cgb.freq,
+                         chan->data.cgb.length, chan->data.cgb.sweep, chan->status);
+        }
+#endif
     } else {
-        chan->data.sound.freq = MidiKeyToFreq(chan->wav, transposedKey, track->pitchCalculated);
+        if (WiiUM4AShouldTraceNote()) {
+            struct WaveData *wav = chan->wav;
+            u32 chanIndex = (u32)(chan - mixer->chans);
+
+            WIIU_M4A_LOG("note-ds #%u player=%08x track=%08x chan=%u type=%02x key=%u transposed=%u prio=%u wav=%08x flags=%04x loop=%u size=%u freq=%u",
+                         sWiiUM4ANoteTraceCount++, (u32)(uintptr_t)player, (u32)(uintptr_t)track, chanIndex, chan->type,
+                         key, transposedKey, priority, (u32)(uintptr_t)wav, WaveDataStatus(wav), WaveDataLoopStart(wav),
+                         WaveDataSampleCount(wav), MidiKeyToFreq(chan->wav, transposedKey, pitchCalculated));
+        }
+        chan->data.sound.freq = MidiKeyToFreq(chan->wav, transposedKey, pitchCalculated);
     }
 
     chan->status = SOUND_CHANNEL_SF_START;
@@ -921,16 +1160,7 @@ void m4aSoundVSync(void)
         }
 
         for (u32 i = 0; i < samplesPerFrame; i++) {
-            // Sample is fixed 8.24 with a value of -1 to 1
-            // but when we add we divide by 8 to add some headroom
-            // and make the mix a much more managable volume
-            fixed8_24 sample = (m4aBuffer[i] + cgbBuffer[i]) >> 3;
-
-            // 1 in 8.24 format is 1 << 24
-            // 32768 is size expected for s16 audio
-            // 32768 = 1 << 15
-            // 24 - 15 = 9
-            audioBuffer[i] = sample >> 9;
+            audioBuffer[i] = MixAudioSampleToS16(m4aBuffer[i], cgbBuffer[i]);
         }
 
         Platform_QueueAudio(audioBuffer, samplesPerFrame * sizeof(s16));

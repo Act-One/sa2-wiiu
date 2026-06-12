@@ -123,6 +123,10 @@
 
 #endif
 
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+#include "platform/shared/ppc_memory.h"
+#endif
+
 #if (GAME == GAME_SA1)
 #define RANGE_INIT(var)  CamCoord(var)[4]
 #define RANGE_xLow(var)  (var)[0]
@@ -144,8 +148,19 @@ typedef struct {
 typedef u32 region_t;
 #endif
 
-#define READ_START_INDEX(p, hrc, rx, ry) (*((u32 *)((((u8 *)(p)) + (((hrc) * (ry)) * (sizeof(u32)))) + ((rx) * (sizeof(u32))))))
 #define NUM_ENEMY_DEFEAT_SCORES          5
+
+static inline u32 StageAssetU32(const void *data)
+{
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+    return PpcLoadU32LE(data);
+#else
+    return *(const u32 *)data;
+#endif
+}
+
+#define READ_START_INDEX(p, hrc, rx, ry)                                                                                                \
+    (StageAssetU32(((const u8 *)(p)) + ((((hrc) * (ry)) + (rx)) * sizeof(u32))))
 
 typedef Task *(*StagePreInitFunc)(void);
 typedef void (*MapEntityInit)(MapEntity *, u16, u16, u8);
@@ -836,15 +851,15 @@ void CreateStageEntitiesManager(void)
     em = TASK_DATA(t);
 
     if (gGameMode != GAME_MODE_MULTI_PLAYER_COLLECT_RINGS) {
-        decompBuf = EwramMalloc(gSpritePosData_interactables[gCurrentLevel]->size);
+        decompBuf = EwramMalloc(RLCompressedSize(gSpritePosData_interactables[gCurrentLevel]));
         RLUnCompWram(gSpritePosData_interactables[gCurrentLevel], decompBuf);
         em->interactables = decompBuf;
 
-        decompBuf = EwramMalloc(gSpritePosData_itemboxes[gCurrentLevel]->size);
+        decompBuf = EwramMalloc(RLCompressedSize(gSpritePosData_itemboxes[gCurrentLevel]));
         RLUnCompWram(gSpritePosData_itemboxes[gCurrentLevel], decompBuf);
         em->items = decompBuf;
 
-        decompBuf = EwramMalloc(gSpritePosData_enemies[gCurrentLevel]->size);
+        decompBuf = EwramMalloc(RLCompressedSize(gSpritePosData_enemies[gCurrentLevel]));
         RLUnCompWram(gSpritePosData_enemies[gCurrentLevel], decompBuf);
         em->enemies = decompBuf;
 
@@ -893,11 +908,11 @@ static void SpawnMapEntities()
 
         interactables++;
 #ifndef NON_MATCHING
-        h_regionCount = (u16)(temp = *interactables++);
+        h_regionCount = (u16)(temp = StageAssetU32(interactables++));
 #else
-        h_regionCount = (u16)*interactables++;
+        h_regionCount = (u16)StageAssetU32(interactables++);
 #endif
-        v_regionCount = (u16)*interactables++;
+        v_regionCount = (u16)StageAssetU32(interactables++);
 
         RANGE_xLow(range) = gCamera.x - 128;
         RANGE_xHigh(range) = gCamera.x + (DISPLAY_WIDTH + 128);
@@ -1064,8 +1079,8 @@ static void SA2_LABEL(Task_8008DCC)(void)
         }
 
         interactables++;
-        h_regionCount = (u16)*interactables++;
-        v_regionCount = (u16)*interactables++;
+        h_regionCount = (u16)StageAssetU32(interactables++);
+        v_regionCount = (u16)StageAssetU32(interactables++);
 
         if (gCamera.x > em->prevCamX) {
             RANGE_xLow(range1) = em->prevCamX + (DISPLAY_WIDTH + 128);

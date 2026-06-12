@@ -36,13 +36,28 @@
 #define SOUND_MODE_DA_BIT       0x00B00000
 #define SOUND_MODE_DA_BIT_SHIFT 20
 
+#define MAX_DIRECTSOUND_CHANNELS 12
+
+#if !PLATFORM_GBA
+#define DEFAULT_DIRECTSOUND_CHANNELS MAX_DIRECTSOUND_CHANNELS
+#elif COLLECT_RINGS_ROM
+#define DEFAULT_DIRECTSOUND_CHANNELS 4
+#elif (ENGINE == ENGINE_3)
+#define DEFAULT_DIRECTSOUND_CHANNELS 6
+#else
+#define DEFAULT_DIRECTSOUND_CHANNELS 5
+#endif
+
 #if COLLECT_RINGS_ROM
-#define DEFAULT_SOUND_MODE (SOUND_MODE_DA_BIT_8 | SOUND_MODE_FREQ_07884 | (15 << SOUND_MODE_MASVOL_SHIFT) | (4 << SOUND_MODE_MAXCHN_SHIFT))
+#define DEFAULT_SOUND_MODE                                                                                                                \
+    (SOUND_MODE_DA_BIT_8 | SOUND_MODE_FREQ_07884 | (15 << SOUND_MODE_MASVOL_SHIFT) | (DEFAULT_DIRECTSOUND_CHANNELS << SOUND_MODE_MAXCHN_SHIFT))
 #else
 #if (ENGINE == ENGINE_3)
-#define DEFAULT_SOUND_MODE (SOUND_MODE_DA_BIT_8 | SOUND_MODE_FREQ_10512 | (10 << SOUND_MODE_MASVOL_SHIFT) | (6 << SOUND_MODE_MAXCHN_SHIFT))
+#define DEFAULT_SOUND_MODE                                                                                                                \
+    (SOUND_MODE_DA_BIT_8 | SOUND_MODE_FREQ_10512 | (10 << SOUND_MODE_MASVOL_SHIFT) | (DEFAULT_DIRECTSOUND_CHANNELS << SOUND_MODE_MAXCHN_SHIFT))
 #else
-#define DEFAULT_SOUND_MODE (SOUND_MODE_DA_BIT_8 | SOUND_MODE_FREQ_10512 | (15 << SOUND_MODE_MASVOL_SHIFT) | (5 << SOUND_MODE_MAXCHN_SHIFT))
+#define DEFAULT_SOUND_MODE                                                                                                                \
+    (SOUND_MODE_DA_BIT_8 | SOUND_MODE_FREQ_10512 | (15 << SOUND_MODE_MASVOL_SHIFT) | (DEFAULT_DIRECTSOUND_CHANNELS << SOUND_MODE_MAXCHN_SHIFT))
 #endif
 #endif
 
@@ -89,8 +104,6 @@
 #define FADE_IN        0x0002
 #define FADE_VOL_MAX   64
 #define FADE_VOL_SHIFT 2
-
-#define MAX_DIRECTSOUND_CHANNELS 12
 
 #if PLATFORM_GBA
 #define PCM_DMA_BUF_SIZE 1584 // size of Direct Sound buffer

@@ -8,10 +8,17 @@ SRCS = main.c extended.c
 
 .PHONY: all clean
 
-all: aif2pcm
+HOST_OS := $(shell uname -s 2>/dev/null || echo $(OS))
+ifneq ($(filter Windows_NT MINGW% MSYS% CYGWIN%,$(HOST_OS)),)
+EXE := .exe
+else
+EXE :=
+endif
+
+all: aif2pcm$(EXE)
 	@:
 
-aif2pcm: $(SRCS)
+aif2pcm$(EXE): $(SRCS)
 	$(CC) $(CFLAGS) $(SRCS) -o $@ $(LDFLAGS) $(LIBS)
 
 clean:

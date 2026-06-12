@@ -6,7 +6,8 @@ SRCS := agb.cpp error.cpp main.cpp midi.cpp tables.cpp
 
 HEADERS := agb.h error.h main.h midi.h tables.h
 
-ifeq ($(OS),Windows_NT)
+HOST_OS := $(shell uname -s 2>/dev/null || echo $(OS))
+ifneq ($(filter Windows_NT MINGW% MSYS% CYGWIN%,$(HOST_OS)),)
 EXE := .exe
 else
 EXE :=

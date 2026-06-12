@@ -74,12 +74,12 @@ const PipeSegment gFrenchHornPipeSequence0[] = {
     {
         .type = PIPE_SEGMENT_TYPE_TRANSLATE,
         120,
-        { ._32 = Q(96.0) },
+        { .translate = { .dX = Q_8_8(96.0), .dY = Q_8_8(0.0) } },
     },
     {
         .type = PIPE_SEGMENT_TYPE_TRANSLATE,
         292,
-        { ._32 = Q(56.0) },
+        { .translate = { .dX = Q_8_8(56.0), .dY = Q_8_8(0.0) } },
     },
     {
         -1,
@@ -106,22 +106,22 @@ const PipeSegment gFrenchHornPipeSequence1[] = {
     {
         9,
         640,
-        { ._16 = { Q_8_8(40.0), Q_8_8(0.0) } },
+        { ._32 = Q(40.0) },
     },
     {
         3,
         320,
-        { ._16 = { Q_8_8(56.0), Q_8_8(0.0) } },
+        { ._32 = Q(56.0) },
     },
     {
         5,
         320,
-        { ._16 = { Q_8_8(56.0), Q_8_8(0.0) } },
+        { ._32 = Q(56.0) },
     },
     {
         10,
         640,
-        { ._16 = { Q_8_8(48.0), Q_8_8(0.0) } },
+        { ._32 = Q(48.0) },
     },
     {
         .type = PIPE_SEGMENT_TYPE_TRANSLATE,
@@ -131,17 +131,17 @@ const PipeSegment gFrenchHornPipeSequence1[] = {
     {
         .type = PIPE_SEGMENT_TYPE_TRANSLATE,
         .step = 120,
-        { ._32 = Q(96.0) },
+        { .translate = { .dX = Q_8_8(96.0), .dY = Q_8_8(0.0) } },
     },
     {
         .type = PIPE_SEGMENT_TYPE_TRANSLATE,
         .step = 120,
-        { ._32 = Q(96.0) },
+        { .translate = { .dX = Q_8_8(96.0), .dY = Q_8_8(0.0) } },
     },
     {
         .type = PIPE_SEGMENT_TYPE_TRANSLATE,
         .step = 292,
-        { ._32 = Q(56.0) },
+        { .translate = { .dX = Q_8_8(56.0), .dY = Q_8_8(0.0) } },
     },
     {
         -1,
@@ -219,6 +219,12 @@ static const s16 sExitRotation[] = {
     224,
 };
 
+static bool32 FrenchHorn_IsKindValid(u16 kind)
+{
+    return kind < ARRAY_COUNT(gUnknown_08C87960) && kind < ARRAY_COUNT(sExitSpeeds) && kind < ARRAY_COUNT(sExitRotation)
+        && gUnknown_08C87960[kind] != NULL;
+}
+
 static void Task_Active(void)
 {
     Sprite_FrenchHorn *horn = TASK_DATA(gCurTask);
@@ -231,6 +237,11 @@ static void Task_Active(void)
         gPlayer.qSpeedAirX = 1;
         gPlayer.qSpeedAirY = 1;
 
+        if (!FrenchHorn_IsKindValid(horn->kind)) {
+            FrenchHorn_HandleExit(horn);
+            return;
+        }
+
         if (IncrementPipeSequence(&horn->pipeSequence, gUnknown_08C87960[horn->kind]) == 0) {
             FrenchHorn_HandleExit(horn);
         }
@@ -241,14 +252,15 @@ static void Task_Active(void)
 
 static void FrenchHorn_HandleExit(Sprite_FrenchHorn *horn)
 {
+    u16 kind = FrenchHorn_IsKindValid(horn->kind) ? horn->kind : 0;
 
     Player_ClearMovestate_IsInScriptedSequence();
     gPlayer.moveState &= ~(MOVESTATE_IA_OVERRIDE);
 
     gPlayer.transition = PLTRANS_UNCURL;
-    gPlayer.qSpeedAirX = sExitSpeeds[horn->kind][0];
-    gPlayer.qSpeedAirY = sExitSpeeds[horn->kind][1];
-    gPlayer.rotation = sExitRotation[horn->kind];
+    gPlayer.qSpeedAirX = sExitSpeeds[kind][0];
+    gPlayer.qSpeedAirY = sExitSpeeds[kind][1];
+    gPlayer.rotation = sExitRotation[kind];
 
     m4aSongNumStart(SE_MUSIC_PLANT_EXIT_HORN);
 
@@ -343,10 +355,19 @@ static void FrenchHorn_Despawn(Sprite_FrenchHorn *horn)
 
 void CreateEntity_FrenchHorn_Entry(MapEntity *me, u16 spriteRegionX, u16 spriteRegionY, u8 spriteY)
 {
-    Task *t = TaskCreate(Task_Idle, sizeof(Sprite_FrenchHorn), 0x2010, 0, TaskDestructor_FrenchHorn);
-    Sprite_FrenchHorn *horn = TASK_DATA(t);
+    u16 kind = me->d.uData[0];
+    Task *t;
+    Sprite_FrenchHorn *horn;
 
-    horn->kind = me->d.sData[0];
+    if (!FrenchHorn_IsKindValid(kind)) {
+        SET_MAP_ENTITY_INITIALIZED(me);
+        return;
+    }
+
+    t = TaskCreate(Task_Idle, sizeof(Sprite_FrenchHorn), 0x2010, 0, TaskDestructor_FrenchHorn);
+    horn = TASK_DATA(t);
+
+    horn->kind = kind;
     horn->me = me;
     horn->spriteX = me->x;
     horn->spriteY = spriteY;

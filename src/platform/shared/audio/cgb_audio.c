@@ -1,6 +1,14 @@
 #include "global.h"
+#include "core.h"
 #include "platform/shared/audio/cgb_audio.h"
 #include "platform/shared/audio/cgb_tables.h"
+
+#ifdef PLATFORM_WIIU
+#include <coreinit/debug.h>
+#define WIIU_CGB_TRACE_LIMIT 128
+#define WIIU_CGB_LOG(fmt, ...) OSReport("[sa2-wiiu][cgb] " fmt "\n", ##__VA_ARGS__)
+static u32 sWiiUCgbTraceCount = 0;
+#endif
 
 static struct AudioCGB gb;
 static fixed8_24 soundChannelPos[4];
@@ -13,6 +21,23 @@ static u16 lfsrMax[2];
 fixed8_24 ch4Samples;
 fixed8_24 volScale[16];
 fixed8_24 ch4StepsScale[12];
+
+static inline u16 cgb_reg16(u8 low, u8 high) { return (u16)low | ((u16)high << 8); }
+static inline u16 cgb_sound1_freq_reg(void) { return cgb_reg16(REG_NR13, REG_NR14); }
+static inline u16 cgb_sound2_freq_reg(void) { return cgb_reg16(REG_NR23, REG_NR24); }
+static inline u16 cgb_sound3_freq_reg(void) { return cgb_reg16(REG_NR33, REG_NR34); }
+static inline u16 cgb_sound4_cnt_h_reg(void) { return cgb_reg16(REG_NR43, REG_NR44); }
+
+#ifdef PLATFORM_WIIU
+static void cgb_trace_trigger(u8 channel, u8 before, u8 after, bool8 restartPhase)
+{
+    if (sWiiUCgbTraceCount < WIIU_CGB_TRACE_LIMIT) {
+        WIIU_CGB_LOG("trigger #%u frame=%u ch=%u restart=%u nr52=%02x->%02x dac=%u vol=%u len=%u lenOn=%u nr50=%02x nr51=%02x",
+                     sWiiUCgbTraceCount++, gFrameCount, channel + 1, restartPhase, before, after, gb.DAC[channel],
+                     gb.Vol[channel], gb.Len[channel], gb.LenOn[channel], REG_NR50, REG_NR51);
+    }
+}
+#endif
 
 void cgb_audio_init(u32 rate)
 {
@@ -96,17 +121,41 @@ void cgb_set_envelope(u8 channel, u8 envelope)
     }
 }
 
-void cgb_trigger_note(u8 channel)
+void cgb_trigger_note_ex(u8 channel, bool8 restartPhase)
 {
-    gb.Vol[channel] = gb.VolI[channel];
-    gb.Len[channel] = gb.LenI[channel];
-    if (channel != 2)
-        gb.EnvCounter[channel] = gb.EnvCounterI[channel];
-    if (channel == 3) {
-        gb.ch4LFSR[0] = 0x8000;
-        gb.ch4LFSR[1] = 0x80;
+    u8 nr52Before = REG_NR52;
+
+    if (restartPhase) {
+        gb.Vol[channel] = gb.VolI[channel];
+        gb.Len[channel] = gb.LenI[channel];
+        if (channel != 2)
+            gb.EnvCounter[channel] = gb.EnvCounterI[channel];
+        if (channel == 2)
+            soundChannelPos[channel] = 0;
+        if (channel == 3) {
+            gb.ch4LFSR[0] = 0x8000;
+            gb.ch4LFSR[1] = 0x80;
+            ch4Samples = 0;
+        }
     }
+
+    if (channel == 2) {
+        if (REG_NR30 & 0x80)
+            REG_NR52 |= SOUND_MASTER_ENABLE | (1 << channel);
+        else
+            REG_NR52 &= (u8)~(1 << channel);
+    } else if (gb.DAC[channel]) {
+        REG_NR52 |= SOUND_MASTER_ENABLE | (1 << channel);
+    } else {
+        REG_NR52 &= (u8)~(1 << channel);
+    }
+
+#ifdef PLATFORM_WIIU
+    cgb_trace_trigger(channel, nr52Before, REG_NR52, restartPhase);
+#endif
 }
+
+void cgb_trigger_note(u8 channel) { cgb_trigger_note_ex(channel, TRUE); }
 
 void cgb_audio_generate(u16 samplesPerFrame)
 {
@@ -178,7 +227,7 @@ void cgb_audio_generate(u16 samplesPerFrame)
             if ((apuCycle & 3) == 2) { // Sweep
                 if (gb.ch1SweepCounterI && gb.ch1SweepShift) {
                     if (--gb.ch1SweepCounter == 0) {
-                        gb.ch1Freq = REG_SOUND1CNT_X & 0x7FF;
+                        gb.ch1Freq = cgb_sound1_freq_reg() & 0x7FF;
                         if (gb.ch1SweepDir) {
                             gb.ch1Freq -= gb.ch1Freq >> gb.ch1SweepShift;
                             if (gb.ch1Freq & 0xF800)
@@ -200,9 +249,9 @@ void cgb_audio_generate(u16 samplesPerFrame)
             }
         }
         // Sound generation loop
-        soundChannelPos[0] += freqTable[REG_SOUND1CNT_X & (ARRAY_COUNT(freqTable) - 1)];
-        soundChannelPos[1] += freqTable[REG_SOUND2CNT_H & (ARRAY_COUNT(freqTable) - 1)];
-        soundChannelPos[2] += freqTable[REG_SOUND3CNT_X & (ARRAY_COUNT(freqTable) - 1)];
+        soundChannelPos[0] += freqTable[cgb_sound1_freq_reg() & (ARRAY_COUNT(freqTable) - 1)];
+        soundChannelPos[1] += freqTable[cgb_sound2_freq_reg() & (ARRAY_COUNT(freqTable) - 1)];
+        soundChannelPos[2] += freqTable[cgb_sound3_freq_reg() & (ARRAY_COUNT(freqTable) - 1)];
 
         soundChannelPos[0] &= (u32_to_fp8_24(32)) - 1;
         soundChannelPos[1] &= (u32_to_fp8_24(32)) - 1;
@@ -231,7 +280,7 @@ void cgb_audio_generate(u16 samplesPerFrame)
             }
             if ((gb.DAC[3]) && (REG_NR52 & 0x08)) {
                 bool32 lfsrMode = ((REG_NR43 & 0x08) == 8);
-                ch4Samples += freqTableNSE[REG_SOUND4CNT_H & (ARRAY_COUNT(freqTableNSE) - 1)];
+                ch4Samples += freqTableNSE[cgb_sound4_cnt_h_reg() & (ARRAY_COUNT(freqTableNSE) - 1)];
                 s8 ch4Out = 0;
                 if (gb.ch4LFSR[lfsrMode] & 1) {
                     ch4Out++;

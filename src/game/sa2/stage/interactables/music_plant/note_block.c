@@ -62,14 +62,24 @@ const u16 sSfxGlockenspiel[NUM_NOTE_BLOCK_TYPES + 1] = {
 
 void CreateEntity_NoteBlock(MapEntity *me, u16 spriteRegionX, u16 spriteRegionY, u8 spriteY)
 {
-    Task *t = TaskCreate(Task_Idle, sizeof(Sprite_NoteBlock), 0x2010, 0, TaskDestructor_NoteBlock);
-    Sprite_NoteBlock *block = TASK_DATA(t);
-    Sprite *s = &block->s;
+    u8 type = me->d.uData[0];
+    Task *t;
+    Sprite_NoteBlock *block;
+    Sprite *s;
+
+    if (type >= ARRAY_COUNT(sAnims) || type >= ARRAY_COUNT(sBounceSpeeds) || type >= ARRAY_COUNT(sSfxGlockenspiel)) {
+        SET_MAP_ENTITY_INITIALIZED(me);
+        return;
+    }
+
+    t = TaskCreate(Task_Idle, sizeof(Sprite_NoteBlock), 0x2010, 0, TaskDestructor_NoteBlock);
+    block = TASK_DATA(t);
+    s = &block->s;
 
     block->health = 3;
     block->bounceOffsetX = 0;
     block->bounceOffsetY = 0;
-    block->type = me->d.uData[0];
+    block->type = type;
 
     block->base.regionX = spriteRegionX;
     block->base.regionY = spriteRegionY;

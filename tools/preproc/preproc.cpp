@@ -147,6 +147,7 @@ int main(int argc, char **argv)
     || (!platform.compare("sdl"))
     || (!platform.compare("sdl_win32"))
     || (!platform.compare("sdl_psp"))
+    || (!platform.compare("wiiu"))
     || (!platform.compare("ps2")))
     {
         fullRGBA = false;

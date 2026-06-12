@@ -40,6 +40,9 @@ else ifeq ($(CPU_ARCH),i386)
     TOOLCHAIN := /usr/x86_64-w64-mingw32/
     PREFIX := x86_64-w64-mingw32-
   endif
+else ifeq ($(CPU_ARCH),ppc)
+  # PowerPC
+  PREFIX := powerpc-eabi-
 else ifeq ($(PLATFORM),sdl_psp)
   PSPDEV    ?= $(HOME)/pspdev
   PSPSDK    := $(PSPDEV)/psp/sdk

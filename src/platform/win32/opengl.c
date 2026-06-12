@@ -290,7 +290,7 @@ void RenderScreenChunks(ChunkSet *set, ChunkGfx *gfx, Background *bg, s16 mapChu
                 break;
             }
             int chunkPosIndex = chunkPosIndexY * bg->mapWidth + chunkPosIndexX;
-            int chunkSetIndex = GetChunkSetIndexFromChunkId(set, bg->metatileMap[chunkPosIndex]);
+            int chunkSetIndex = GetChunkSetIndexFromChunkId(set, bg->metatileMap[chunkPosIndex] & TILE_MASK_INDEX);
             int chunkStartIndex = chunkSetIndex * CHUNK_SIZE_RGBA;
             int chunkScreenX = (screenX + (chunkX * 96));
             int chunkScreenY = DISPLAY_HEIGHT - (screenY + (chunkY * 96));

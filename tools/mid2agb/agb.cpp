@@ -72,7 +72,7 @@ std::string Comment(std::string str)
 {
     if(g_commentStyle == "arm") {
         return ("@ " + str);
-    } else if(g_commentStyle == "x86") {
+    } else if((g_commentStyle == "x86") || (g_commentStyle == "ppc")) {
         return ("/* " + str + " */");
     } else {
         RaiseError("g_commentStyle '%s' unsupported.\n", g_commentStyle.c_str());

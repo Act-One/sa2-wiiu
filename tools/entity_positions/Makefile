@@ -13,17 +13,23 @@ NO_ERROR = -Wno-error=sign-compare -Wno-error=implicit-function-declaration -Wno
 # TODO: Maybe change this:
 #       Needs to use -std-gnu11 to use MAP_ANONYMOUS in mmap call in ArenaAlloc.
 CFLAGS = -I $(PARSER_DIR) -I $(CSV_CONV_DIR) -Wall -Wextra -Werror $(NO_ERROR) -std=gnu11 -O2
-LDFLAGS = -L$(ARENA_ALLOC_DIR) -L$(PARSER_DIR) -L $(CSV_CONV_DIR) -lcsv_conv -lc_header_parser -larena_alloc 
+LDFLAGS = $(CSV_CONV_LIB) $(PARSER_LIB) $(ARENA_ALLOC_LIB)
 
 .PHONY: all clean
 
+HOST_OS := $(shell uname -s 2>/dev/null || echo $(OS))
+ifneq ($(filter Windows_NT MINGW% MSYS% CYGWIN%,$(HOST_OS)),)
+EXE := .exe
+else
+EXE :=
+endif
 
 SRCS = entity_positions.c
 
-all: entity_positions
+all: entity_positions$(EXE)
 	@:
 
-entity_positions: $(SRCS) $(LIB_OBJS)
+entity_positions$(EXE): $(SRCS) $(LIB_OBJS)
 	$(CC) $(CFLAGS) $(SRCS) -o $@ $(LDFLAGS)
 
 $(ARENA_ALLOC_LIB):

@@ -40,9 +40,17 @@ static void TaskDestructor_8080EF8(Task *);
 
 void CreateAngledNoteParticle(s32 posX, s32 posY, u16 framesUntilVisible, u16 framesUntilDestroyed, s16 velocity, u8 quarterAngle, u8 kind)
 {
-    Task *t = TaskCreate(Task_8080DB8, sizeof(Sprite_NoteParticle), 0x2010, 0, TaskDestructor_8080EF8);
-    Sprite_NoteParticle *np = TASK_DATA(t);
-    Sprite *s = &np->s;
+    Task *t;
+    Sprite_NoteParticle *np;
+    Sprite *s;
+
+    if (kind >= ARRAY_COUNT(gUnknown_080E0140)) {
+        return;
+    }
+
+    t = TaskCreate(Task_8080DB8, sizeof(Sprite_NoteParticle), 0x2010, 0, TaskDestructor_8080EF8);
+    np = TASK_DATA(t);
+    s = &np->s;
 
     np->posX = posX;
     np->posY = posY;
@@ -70,9 +78,17 @@ void CreateAngledNoteParticle(s32 posX, s32 posY, u16 framesUntilVisible, u16 fr
 
 void CreateNoteParticle(s32 posX, s32 posY, u16 framesUntilVisible, u16 framesUntilDestroyed, s16 accelX, s16 accelY, u8 kind)
 {
-    Task *t = TaskCreate(Task_8080E54, sizeof(Sprite_NoteParticle), 0x2010, 0, TaskDestructor_8080EF8);
-    Sprite_NoteParticle *np = TASK_DATA(t);
-    Sprite *s = &np->s;
+    Task *t;
+    Sprite_NoteParticle *np;
+    Sprite *s;
+
+    if (kind >= ARRAY_COUNT(gUnknown_080E0140)) {
+        return;
+    }
+
+    t = TaskCreate(Task_8080E54, sizeof(Sprite_NoteParticle), 0x2010, 0, TaskDestructor_8080EF8);
+    np = TASK_DATA(t);
+    s = &np->s;
 
     np->posX = posX;
     np->posY = posY;
@@ -146,7 +162,7 @@ static void Task_8080E54(void)
 static void TaskDestructor_8080EF8(Task *t)
 {
     Sprite_NoteParticle *np = TASK_DATA(t);
-    if (gUnknown_080E0140[np->kind][3] != 0) {
+    if (np->kind < ARRAY_COUNT(gUnknown_080E0140) && gUnknown_080E0140[np->kind][3] != 0) {
         VramFree(np->s.graphics.dest);
     }
 }

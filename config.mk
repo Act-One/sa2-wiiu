@@ -7,6 +7,10 @@ MIDI_COMMENTS := "arm"
 THUMB_SUPPORT ?= 1   # Supports ARM's Thumb instruction set
 COMPARE       ?= 1
 
+ifeq ($(PLATFORM),wiiu)
+  CPU_ARCH := ppc
+endif
+
 
 ifeq ($(CPU_ARCH),arm)
   ifneq ($(PLATFORM),gba)
@@ -18,6 +22,9 @@ ifeq ($(CPU_ARCH),arm)
 else ifeq ($(CPU_ARCH),i386)
     THUMB_SUPPORT ?= 0
     MIDI_COMMENTS := "x86"
+else ifeq ($(CPU_ARCH),ppc)
+  THUMB_SUPPORT ?= 0
+  MIDI_COMMENTS := "ppc"
 else
     $(error unknown arch: $(CPU_ARCH))
 endif
@@ -51,7 +58,11 @@ else
   # Other
     PORTABLE              := 1
     NON_MATCHING          := 1
+ifeq ($(PLATFORM),wiiu)
+    ENABLE_DECOMP_CREDITS := 0
+else
     ENABLE_DECOMP_CREDITS := 1
+endif
     COMPARE  ?= 0
     LDSCRIPT := $(LDSCRIPT).txt
 endif

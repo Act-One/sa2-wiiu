@@ -15,6 +15,16 @@ const Collision *gRefCollision = NULL;
 static ALIGNED(8) u32 gUnknown_3000410[3];
 static ALIGNED(8) u32 gUnknown_3000420[3];
 
+static inline u16 CollisionAssetU16(const u16 *data, u32 index)
+{
+    return data[index];
+}
+
+static inline u32 CollisionMapIndexAt(const Collision *coll, u32 layer, u32 index)
+{
+    return coll->map[layer][index];
+}
+
 s32 SA2_LABEL(sub_801EF94)(s32 p0, s32 p1, s32 layer);
 
 #define POS__NOT_MOD(i)                                                                                                                    \
@@ -509,7 +519,7 @@ s32 SA2_LABEL(sub_801EB44)(s32 p0, s32 p1, s32 layer)
     }
 
     if (layer & 0x80) {
-        s32 flags = gRefCollision->flags[mtTileIndex / (unsigned)TILE_WIDTH];
+        s32 flags = CollisionAssetU16(gRefCollision->flags, mtTileIndex / (unsigned)TILE_WIDTH);
 
         // 2: one tile's flags' bit-width
         flags >>= ((mtTileIndex % (unsigned)TILE_WIDTH) * 2);
@@ -565,7 +575,7 @@ s32 SA2_LABEL(sub_801EC3C)(s32 p0, s32 p1, s32 layer)
     }
 
     if (layer & PLAYER_LAYER__80) {
-        s32 flags = gRefCollision->flags[mtTileIndex / (unsigned)TILE_WIDTH];
+        s32 flags = CollisionAssetU16(gRefCollision->flags, mtTileIndex / (unsigned)TILE_WIDTH);
 
         // 2: one tile's flags' bit-width
         flags >>= ((mtTileIndex % (unsigned)TILE_WIDTH) * 2);
@@ -624,7 +634,7 @@ s32 SA2_LABEL(sub_801ED24)(s32 p0, s32 p1, s32 p2, u8 *p3)
     }
 
     if (p2 & 0x80) {
-        s32 flags = gRefCollision->flags[mtTileIndex / 8u];
+        s32 flags = CollisionAssetU16(gRefCollision->flags, mtTileIndex / 8u);
 
         // 2: one tile's flags' bit-width
         flags >>= ((mtTileIndex % 8u) * 2);
@@ -759,7 +769,7 @@ s32 SA2_LABEL(sub_801EE64)(s32 p0in, s32 p1in, s32 p2in, u8 *p3in)
     // _0801EEF8
 
     if (p2 & 0x80) {
-        s32 flags = gRefCollision->flags[r7 / 8u];
+        s32 flags = CollisionAssetU16(gRefCollision->flags, r7 / 8u);
 
         // 2: one tile's flags' bit-width
         flags >>= ((r7 & r6) * 2);
@@ -876,7 +886,7 @@ s32 SA2_LABEL(sub_801EF94)(s32 p0, s32 p1, s32 layer)
     }
 
     coll = gRefCollision;
-    mtIndex = (coll->map[layer])[(r3 * coll->levelX) + r8];
+    mtIndex = CollisionMapIndexAt(coll, layer, (r3 * coll->levelX) + r8);
 
     // ((r5 << 3) + (r5 << 2)) == r5 * TILES_PER_METATILE_AXIS
     r1 = ((r5 << 3) + (r5 << 2) + r7);
@@ -892,7 +902,7 @@ s32 SA2_LABEL(sub_801EF94)(s32 p0, s32 p1, s32 layer)
     pMeta += r3;
     pMeta += mtIndex;
     pMeta += i;
-    result = *(u16 *)pMeta;
+    result = CollisionAssetU16((const u16 *)pMeta, 0);
 
     return result;
 }

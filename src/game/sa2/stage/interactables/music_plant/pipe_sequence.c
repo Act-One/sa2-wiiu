@@ -425,11 +425,31 @@ void InitPipeSequence(PipeSequence *pipeSequence, s32 x, s32 y)
 bool32 IncrementPipeSequence(PipeSequence *pipeSequence, const PipeSegment *data)
 {
     u32 result;
+    u16 segmentType;
+    PipeHandler handler;
+
+    if (data == NULL) {
+        pipeSequence->index = (u16)-1;
+        return FALSE;
+    }
+
     if (pipeSequence->index == (u16)-1) {
         return FALSE;
     }
 
-    sHandlers[data[pipeSequence->index].type](pipeSequence, data);
+    segmentType = data[pipeSequence->index].type;
+    if (segmentType >= ARRAY_COUNT(sHandlers)) {
+        pipeSequence->index = (u16)-1;
+        return FALSE;
+    }
+
+    handler = sHandlers[segmentType];
+    if (handler == NULL) {
+        pipeSequence->index = (u16)-1;
+        return FALSE;
+    }
+
+    handler(pipeSequence, data);
 
     result = pipeSequence->index;
     result ^= (u16)-1;

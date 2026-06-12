@@ -81,10 +81,19 @@ void CreateEntity_LightBridge(MapEntity *me, u16 spriteRegionX, u16 spriteRegion
 {
     void *vram;
     u8 i;
-    Task *t = TaskCreate(Task_LightBridgeInactive, sizeof(Sprite_LightBridge), 0x2010, 0, TaskDestructor_InteractableTecBaseLightBridge);
-    Sprite_LightBridge *lightBridge = TASK_DATA(t);
+    u8 type = me->d.uData[0];
+    Task *t;
+    Sprite_LightBridge *lightBridge;
     Sprite *s;
-    lightBridge->type = me->d.uData[0];
+
+    if (type >= ARRAY_COUNT(sOutOfRangeDimensions) || type >= ARRAY_COUNT(sWithinRangeDimensions) || type >= ARRAY_COUNT(sSoundDurations)) {
+        SET_MAP_ENTITY_INITIALIZED(me);
+        return;
+    }
+
+    t = TaskCreate(Task_LightBridgeInactive, sizeof(Sprite_LightBridge), 0x2010, 0, TaskDestructor_InteractableTecBaseLightBridge);
+    lightBridge = TASK_DATA(t);
+    lightBridge->type = type;
     lightBridge->unk6C = me->d.uData[1];
     lightBridge->active = FALSE;
     lightBridge->playingSfx = FALSE;

@@ -4,10 +4,17 @@ SRCS = gbafix.c
 
 .PHONY: all clean
 
-all: gbafix
+HOST_OS := $(shell uname -s 2>/dev/null || echo $(OS))
+ifneq ($(filter Windows_NT MINGW% MSYS% CYGWIN%,$(HOST_OS)),)
+EXE := .exe
+else
+EXE :=
+endif
+
+all: gbafix$(EXE)
 	@:
 
-gbafix: $(SRCS)
+gbafix$(EXE): $(SRCS)
 	$(CC) $(SRCS) -o $@ $(LDFLAGS)
 
 clean:

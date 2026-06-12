@@ -8,6 +8,23 @@
 #include "sprite.h"
 #include "trig.h"
 
+#ifdef PLATFORM_WIIU
+#include <coreinit/debug.h>
+
+#define WIIU_GAPPED_LOOP_TRACE_LIMIT 32
+static u32 sWiiUGappedLoopTraceCount = 0;
+
+static bool32 WiiUGappedLoopShouldTrace(void)
+{
+    return sWiiUGappedLoopTraceCount < WIIU_GAPPED_LOOP_TRACE_LIMIT;
+}
+
+#define WIIU_GAPPED_LOOP_LOG(fmt, ...) OSReport("[sa2-wiiu][loop] " fmt "\n", ##__VA_ARGS__)
+#else
+#define WiiUGappedLoopShouldTrace() 0
+#define WIIU_GAPPED_LOOP_LOG(fmt, ...) ((void)0)
+#endif
+
 typedef struct {
     SpriteBase base;
     s32 unkC;
@@ -34,6 +51,12 @@ static void Task_GappedLoopForwardsMain(void)
             if (y <= I(gPlayer.qWorldY) && (y + me->d.uData[3] * 8) >= I(gPlayer.qWorldY)) {
                 if (y <= I(gPlayer.qWorldY) && (y + me->d.uData[3] * 8) >= I(gPlayer.qWorldY)) {
                     if (gPlayer.qSpeedGround > Q(3) && !(gPlayer.moveState & (MOVESTATE_FACING_LEFT | MOVESTATE_IN_AIR))) {
+                        if (WiiUGappedLoopShouldTrace()) {
+                            WIIU_GAPPED_LOOP_LOG("trigger-fwd #%u me=%08x world=(%d,%d) player=(%d,%d) speed=%d data=[%d,%d,%u,%u]",
+                                                 sWiiUGappedLoopTraceCount++, (u32)(uintptr_t)me, x, y, I(gPlayer.qWorldX),
+                                                 I(gPlayer.qWorldY), I(gPlayer.qSpeedGround), me->d.sData[0], me->d.sData[1],
+                                                 me->d.uData[2], me->d.uData[3]);
+                        }
                         gCurTask->main = Task_JumpSequenceForwards;
                         gPlayer.moveState |= MOVESTATE_IA_OVERRIDE;
                         gappedLoop->playerAngle
@@ -108,6 +131,12 @@ static void Task_GappedLoopReverseMain(void)
                 if (y <= I(gPlayer.qWorldY) && (y + me->d.uData[3] * 8) >= I(gPlayer.qWorldY)) {
                     if (gPlayer.qSpeedGround < -Q(3) && (gPlayer.moveState & MOVESTATE_FACING_LEFT)
                         && !(gPlayer.moveState & MOVESTATE_IN_AIR)) {
+                        if (WiiUGappedLoopShouldTrace()) {
+                            WIIU_GAPPED_LOOP_LOG("trigger-rev #%u me=%08x world=(%d,%d) player=(%d,%d) speed=%d data=[%d,%d,%u,%u]",
+                                                 sWiiUGappedLoopTraceCount++, (u32)(uintptr_t)me, x, y, I(gPlayer.qWorldX),
+                                                 I(gPlayer.qWorldY), I(gPlayer.qSpeedGround), me->d.sData[0], me->d.sData[1],
+                                                 me->d.uData[2], me->d.uData[3]);
+                        }
                         gCurTask->main = Task_JumpSequenceReverse;
                         gPlayer.moveState |= MOVESTATE_IA_OVERRIDE;
                         gappedLoop->playerAngle
@@ -177,6 +206,13 @@ void CreateEntity_GappedLoop_Start(MapEntity *me, u16 spriteRegionX, u16 spriteR
 
     gappedLoop->unkC = Q(TO_WORLD_POS(gappedLoop->base.meX, spriteRegionX) - 96);
     gappedLoop->unk10 = Q(TO_WORLD_POS(me->y, spriteRegionY) + 96);
+
+    if (WiiUGappedLoopShouldTrace()) {
+        WIIU_GAPPED_LOOP_LOG("create-fwd #%u me=%08x world=(%d,%d) center=(%d,%d) data=[%d,%d,%u,%u]",
+                             sWiiUGappedLoopTraceCount++, (u32)(uintptr_t)me, TO_WORLD_POS(gappedLoop->base.meX, spriteRegionX),
+                             TO_WORLD_POS(me->y, spriteRegionY), I(gappedLoop->unkC), I(gappedLoop->unk10), me->d.sData[0],
+                             me->d.sData[1], me->d.uData[2], me->d.uData[3]);
+    }
 }
 
 void CreateEntity_GappedLoop_End(MapEntity *me, u16 spriteRegionX, u16 spriteRegionY, u8 spriteY)
@@ -192,4 +228,11 @@ void CreateEntity_GappedLoop_End(MapEntity *me, u16 spriteRegionX, u16 spriteReg
     // BUG: not sure if these offset values are correct for the reverse
     gappedLoop->unkC = Q(TO_WORLD_POS(gappedLoop->base.meX, spriteRegionX) + 96);
     gappedLoop->unk10 = Q(TO_WORLD_POS(me->y, spriteRegionY) + 96);
+
+    if (WiiUGappedLoopShouldTrace()) {
+        WIIU_GAPPED_LOOP_LOG("create-rev #%u me=%08x world=(%d,%d) center=(%d,%d) data=[%d,%d,%u,%u]",
+                             sWiiUGappedLoopTraceCount++, (u32)(uintptr_t)me, TO_WORLD_POS(gappedLoop->base.meX, spriteRegionX),
+                             TO_WORLD_POS(me->y, spriteRegionY), I(gappedLoop->unkC), I(gappedLoop->unk10), me->d.sData[0],
+                             me->d.sData[1], me->d.uData[2], me->d.uData[3]);
+    }
 }

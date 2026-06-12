@@ -41,7 +41,7 @@
 #if PORTABLE
 // NOTE: Used in gba/types.h, so they have to be defined before the #include
 #if defined(__PSP__)
-// PSP: Use GBA-native resolution, SDL scales to 480x272
+// PSP: Use GBA-native resolution, SDL scales to 480x272.
 #define DISPLAY_WIDTH  240
 #define DISPLAY_HEIGHT 160
 #elif defined(__PS2__)

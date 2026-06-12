@@ -58,12 +58,22 @@ static const u16 sNoteSphereSfx[8] = {
 
 void CreateEntity_NoteSphere(MapEntity *me, u16 spriteRegionX, u16 spriteRegionY, u8 spriteY)
 {
-    Task *t = TaskCreate(Task_Idle, sizeof(Sprite_NoteSphere), 0x2010, 0, TaskDestructor_Interactable_MusicPlant_Note_Sphere);
-    Sprite_NoteSphere *note = TASK_DATA(t);
-    Sprite *s = &note->disp;
+    u8 kind = me->d.uData[0];
+    Task *t;
+    Sprite_NoteSphere *note;
+    Sprite *s;
+
+    if (kind >= ARRAY_COUNT(sNoteSphereAnimInfo) || kind >= ARRAY_COUNT(sNoteSphereVelocities) || kind >= ARRAY_COUNT(sNoteSphereSfx)) {
+        SET_MAP_ENTITY_INITIALIZED(me);
+        return;
+    }
+
+    t = TaskCreate(Task_Idle, sizeof(Sprite_NoteSphere), 0x2010, 0, TaskDestructor_Interactable_MusicPlant_Note_Sphere);
+    note = TASK_DATA(t);
+    s = &note->disp;
     note->unk44 = 0;
     note->unk46 = 0;
-    note->kind = me->d.uData[0];
+    note->kind = kind;
 
     note->base.regionX = spriteRegionX;
     note->base.regionY = spriteRegionY;

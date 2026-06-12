@@ -11,14 +11,21 @@ SRCS = main.c convert_png.c gfx.c jasc_pal.c lz.c rl.c util.c font.c huff.c
 
 .PHONY: all clean
 
-all: gbagfx
+HOST_OS := $(shell uname -s 2>/dev/null || echo $(OS))
+ifneq ($(filter Windows_NT MINGW% MSYS% CYGWIN%,$(HOST_OS)),)
+EXE := .exe
+else
+EXE :=
+endif
+
+all: gbagfx$(EXE)
 	@:
 
-gbagfx-debug: $(SRCS) convert_png.h gfx.h global.h jasc_pal.h lz.h rl.h util.h font.h
+gbagfx-debug$(EXE): $(SRCS) convert_png.h gfx.h global.h jasc_pal.h lz.h rl.h util.h font.h
 	$(CC) $(CFLAGS) -DDEBUG $(SRCS) -o $@ $(LDFLAGS) $(LIBS)
 
-gbagfx: $(SRCS) convert_png.h gfx.h global.h jasc_pal.h lz.h rl.h util.h font.h
+gbagfx$(EXE): $(SRCS) convert_png.h gfx.h global.h jasc_pal.h lz.h rl.h util.h font.h
 	$(CC) $(CFLAGS) $(SRCS) -o $@ $(LDFLAGS) $(LIBS)
 
 clean:
-	$(RM) gbagfx gbagfx.exe
+	$(RM) gbagfx gbagfx.exe gbagfx-debug gbagfx-debug.exe

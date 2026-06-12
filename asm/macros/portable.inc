@@ -26,6 +26,6 @@
 #elif defined(PLATFORM_GBA)
     .align 2       // Align to 4 bytes on GBA
 #else
-    .align 4       // Default alignment to 4 bytes
+    .balign 4      // Default alignment to 4 bytes
 #endif
 .endm

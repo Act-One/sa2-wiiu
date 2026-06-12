@@ -5,6 +5,10 @@
 #include "game/shared/stage/rings_scatter.h"
 #include "game/shared/stage/entities_manager.h"
 
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+#include "platform/shared/ppc_memory.h"
+#endif
+
 #if (GAME == GAME_SA1)
 #include "lib/m4a/m4a.h"
 
@@ -23,6 +27,20 @@ void *CreateRoomEvent(void)
     return result;
 }
 
+static inline u32 StageAssetU32(const void *data)
+{
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+    return PpcLoadU32LE(data);
+#else
+    return *(const u32 *)data;
+#endif
+}
+
+static inline u32 StageOffsetEntry(const u32 *table, u16 width, u32 x, u32 y)
+{
+    return StageAssetU32(((const u8 *)table) + ((((u32)width * y) + x) * sizeof(u32)));
+}
+
 void ReceiveRoomEvent_PlatformChange(union MultiSioData *msioData, u8 someId)
 {
     if (gEntitiesManagerTask != NULL) {
@@ -33,11 +51,11 @@ void ReceiveRoomEvent_PlatformChange(union MultiSioData *msioData, u8 someId)
         u32 r1, r2, r2_2;
         u32 offset, offset2;
         ias++; // skip size
-        h_regionCount = *ias++; // get h_regionCount
+        h_regionCount = (u16)StageAssetU32(ias++); // get h_regionCount
         ias++; // skip v_regionCount
         r2 = msioData->pat0.unkF;
 
-        offset = *(u32 *)(((u8 *)ias) + ((h_regionCount * msioData->pat4.unk10) * sizeof(u32)) + (r2 * sizeof(u32)));
+        offset = StageOffsetEntry(ias, h_regionCount, r2, msioData->pat4.unk10);
         if (offset != 0) {
             MapEntity *cursor;
 
@@ -62,7 +80,7 @@ void ReceiveRoomEvent_ItemBoxBreak(union MultiSioData *msioData, u8 UNUSED someI
         u16 h_regionCount;
         u32 r2;
         items++; // skip size
-        h_regionCount = *items++; // get h_regionCount
+        h_regionCount = (u16)StageAssetU32(items++); // get h_regionCount
         items++; // skip v_regionCount
         r2 = msioData->pat0.unkF;
 
@@ -72,7 +90,7 @@ void ReceiveRoomEvent_ItemBoxBreak(union MultiSioData *msioData, u8 UNUSED someI
 #else
             register u32 offset asm("r1")
 #endif
-                = *(u32 *)(((u8 *)items) + ((h_regionCount * msioData->pat4.unk10) * sizeof(u32)) + (r2 * sizeof(u32)));
+                = StageOffsetEntry(items, h_regionCount, r2, msioData->pat4.unk10);
             if (offset != 0) {
                 MapEntity_Itembox *cursor;
 
@@ -97,7 +115,7 @@ void ReceiveRoomEvent_EnemyDestroyed(union MultiSioData *msioData, u8 UNUSED som
         u16 h_regionCount;
         u32 r2;
         enemies++; // skip size
-        h_regionCount = *enemies++; // get h_regionCount
+        h_regionCount = (u16)StageAssetU32(enemies++); // get h_regionCount
         enemies++; // skip v_regionCount
         r2 = msioData->pat0.unkF;
         {
@@ -106,7 +124,7 @@ void ReceiveRoomEvent_EnemyDestroyed(union MultiSioData *msioData, u8 UNUSED som
 #else
             register u32 offset asm("r1")
 #endif
-                = *(u32 *)(((u8 *)enemies) + ((h_regionCount * msioData->pat4.unk10) * sizeof(u32)) + (r2 * sizeof(u32)));
+                = StageOffsetEntry(enemies, h_regionCount, r2, msioData->pat4.unk10);
             if (offset != 0) {
                 MapEntity *cursor;
 
@@ -136,7 +154,7 @@ void ReceiveRoomEvent_MysteryItemBoxBreak(union MultiSioData *msioData, u8 UNUSE
         u16 h_regionCount;
         u32 r2;
         ias++; // skip size
-        h_regionCount = *ias++; // get h_regionCount
+        h_regionCount = (u16)StageAssetU32(ias++); // get h_regionCount
         ias++; // skip v_regionCount
         r2 = msioData->pat0.unkF;
         {
@@ -145,7 +163,7 @@ void ReceiveRoomEvent_MysteryItemBoxBreak(union MultiSioData *msioData, u8 UNUSE
 #else
             register u32 offset asm("r1")
 #endif
-                = *(u32 *)(((u8 *)ias) + ((h_regionCount * msioData->pat4.unk10) * sizeof(u32)) + (r2 * sizeof(u32)));
+                = StageOffsetEntry(ias, h_regionCount, r2, msioData->pat4.unk10);
             if (offset != 0) {
                 MapEntity *cursor;
 

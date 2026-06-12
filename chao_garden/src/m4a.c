@@ -1,9 +1,22 @@
 #include "m4a.h"
 #include "global.h"
 
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+#include "platform/shared/ppc_memory.h"
+#endif
+
 extern char SoundMainRAM_Buffer[0x400];
 
 static void DummyCallback(void);
+
+static inline u32 WaveDataFreq(const struct WaveData *wav)
+{
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+    return PpcLoadU32LE(&wav->freq);
+#else
+    return wav->freq;
+#endif
+}
 
 u32 MidiKeyToFreq(struct WaveData *wav, u8 key, u8 fineAdjust)
 {
@@ -19,7 +32,7 @@ u32 MidiKeyToFreq(struct WaveData *wav, u8 key, u8 fineAdjust)
     val1 = gFreqTable[val1 & 0xF] >> (val1 >> 4);
     val2 = gScaleTable[key + 1];
     val2 = gFreqTable[val2 & 0xF] >> (val2 >> 4);
-    return umul3232H32(wav->freq, val1 + umul3232H32(val2 - val1, fineAdjustShifted));
+    return umul3232H32(WaveDataFreq(wav), val1 + umul3232H32(val2 - val1, fineAdjustShifted));
 }
 
 void sub_0201041C(void) { }

@@ -4,6 +4,50 @@
 
 #include <stdio.h>
 
+#ifdef PLATFORM_WIIU
+#include <coreinit/debug.h>
+#include "platform/shared/ppc_memory.h"
+
+extern u32 gFrameCount;
+
+#define WIIU_M4A_CTRL_TRACE_LIMIT 256
+#define WIIU_M4A_CTRL_LOG(fmt, ...) OSReport("[sa2-wiiu][m4a-ctrl] " fmt "\n", ##__VA_ARGS__)
+
+static u32 sWiiUM4ACtrlTraceCount = 0;
+
+static bool32 WiiUM4ACtrlShouldTrace(void)
+{
+    return sWiiUM4ACtrlTraceCount < WIIU_M4A_CTRL_TRACE_LIMIT;
+}
+
+static s32 WiiUM4APlayerIndex(const struct MP2KPlayerState *mplayInfo)
+{
+    for (s32 i = 0; i < NUM_MUSIC_PLAYERS; i++) {
+        if (gMPlayTable[i].info == mplayInfo) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+static void WiiUM4ATraceSongRequest(const char *api, u16 n, const struct Song *song, const struct MusicPlayer *mplay)
+{
+    if (WiiUM4ACtrlShouldTrace()) {
+        WIIU_M4A_CTRL_LOG("%s #%u frame=%u song=%u ms=%u me=%u player=%d info=%08x hdr=%08x cur=%08x status=%08x prio=%u",
+                          api, sWiiUM4ACtrlTraceCount++, gFrameCount, n, song->ms, song->me,
+                          WiiUM4APlayerIndex(mplay->info), (u32)(uintptr_t)mplay->info, (u32)(uintptr_t)song->header,
+                          (u32)(uintptr_t)mplay->info->songHeader, mplay->info->status,
+                          song->header != NULL ? song->header->priority : 0);
+    }
+}
+#else
+#define WIIU_M4A_CTRL_LOG(fmt, ...) ((void)0)
+#define WiiUM4ACtrlShouldTrace() 0
+#define WiiUM4APlayerIndex(mplayInfo) (-1)
+#define WiiUM4ATraceSongRequest(api, n, song, mplay) ((void)0)
+#endif
+
 #if !PLATFORM_GBA
 #include "platform/shared/audio/cgb_audio.h"
 #endif
@@ -38,6 +82,25 @@ EWRAM_DATA struct MP2KPlayerState gMPlayInfo_SE2 = {};
 EWRAM_DATA u8 gMPlayMemAccArea[4 * sizeof(uintptr_t)] = {};
 EWRAM_DATA struct MP2KPlayerState gMPlayInfo_SE3 = {};
 
+static inline u32 WaveDataFreq(const struct WaveData *wav)
+{
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+    return PpcLoadU32LE(&wav->freq);
+#else
+    return wav->freq;
+#endif
+}
+
+static inline u32 CgbWaveRamU32(const void *ptr)
+{
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+    return PpcLoadU32LE(ptr);
+#else
+    return *(const u32 *)ptr;
+#endif
+}
+static inline u8 CgbFreqHighByte(u32 freq) { return (u8)((freq >> 8) & 0xFF); }
+
 static void MP2K_event_null(void);
 
 u32 MidiKeyToFreq(struct WaveData *wav, u8 key, u8 fineAdjust)
@@ -57,7 +120,7 @@ u32 MidiKeyToFreq(struct WaveData *wav, u8 key, u8 fineAdjust)
     val2 = gScaleTable[key + 1];
     val2 = gFreqTable[val2 & 0xF] >> (val2 >> 4);
 
-    return umul3232H32(wav->freq, val1 + umul3232H32(val2 - val1, fineAdjustShifted));
+    return umul3232H32(WaveDataFreq(wav), val1 + umul3232H32(val2 - val1, fineAdjustShifted));
 }
 
 UNUSED static void UnusedFunc(void) { }
@@ -93,6 +156,15 @@ void m4aSoundInit(void)
     MPlayExtender(gCgbChans);
     m4aSoundMode(DEFAULT_SOUND_MODE);
 
+#ifdef PLATFORM_WIIU
+    if (WiiUM4ACtrlShouldTrace()) {
+        WIIU_M4A_CTRL_LOG("sound-init #%u frame=%u mixer=%08x mode=%08x chans=%u samples=%d rate=%d cgb=%08x",
+                          sWiiUM4ACtrlTraceCount++, gFrameCount, (u32)(uintptr_t)&gSoundInfo, DEFAULT_SOUND_MODE,
+                          gSoundInfo.numChans, gSoundInfo.samplesPerFrame, gSoundInfo.sampleRate,
+                          (u32)(uintptr_t)gSoundInfo.cgbChans);
+    }
+#endif
+
     for (i = 0; i < NUM_MUSIC_PLAYERS; i++) {
         struct MP2KPlayerState *mplayInfo = gMPlayTable[i].info;
         MPlayOpen(mplayInfo, gMPlayTable[i].track, gMPlayTable[i].numTracks);
@@ -110,6 +182,7 @@ void m4aSongNumStart(u16 n)
     const struct Song *song = &songTable[n];
     const struct MusicPlayer *mplay = &mplayTable[song->ms];
 
+    WiiUM4ATraceSongRequest("song-start", n, song, mplay);
     MPlayStart(mplay->info, song->header);
 }
 
@@ -120,6 +193,7 @@ void m4aSongNumStartOrChange(u16 n)
     const struct Song *song = &songTable[n];
     const struct MusicPlayer *mplay = &mplayTable[song->ms];
 
+    WiiUM4ATraceSongRequest("song-start-change", n, song, mplay);
     if (mplay->info->songHeader != song->header) {
         MPlayStart(mplay->info, song->header);
     } else {
@@ -136,6 +210,7 @@ void m4aSongNumStartOrContinue(u16 n)
     const struct Song *song = &songTable[n];
     const struct MusicPlayer *mplay = &mplayTable[song->ms];
 
+    WiiUM4ATraceSongRequest("song-start-continue", n, song, mplay);
     if (mplay->info->songHeader != song->header)
         MPlayStart(mplay->info, song->header);
     else if ((mplay->info->status & MUSICPLAYER_STATUS_TRACK) == 0)
@@ -151,6 +226,7 @@ void m4aSongNumStop(u16 n)
     const struct Song *song = &songTable[n];
     const struct MusicPlayer *mplay = &mplayTable[song->ms];
 
+    WiiUM4ATraceSongRequest("song-stop", n, song, mplay);
     if (mplay->info->songHeader == song->header)
         MPlayStop(mplay->info);
 }
@@ -351,6 +427,14 @@ void SoundInit(struct SoundMixerState *soundInfo)
 #endif
 
     soundInfo->lockStatus = ID_NUMBER;
+
+#ifdef PLATFORM_WIIU
+    if (WiiUM4ACtrlShouldTrace()) {
+        WIIU_M4A_CTRL_LOG("soundinit-core #%u frame=%u mixer=%08x chans=%u samples=%d rate=%d lock=%08x",
+                          sWiiUM4ACtrlTraceCount++, gFrameCount, (u32)(uintptr_t)soundInfo, soundInfo->numChans,
+                          soundInfo->samplesPerFrame, soundInfo->sampleRate, soundInfo->lockStatus);
+    }
+#endif
 }
 
 void SampleFreqSet(u32 freq)
@@ -398,8 +482,20 @@ void m4aSoundMode(u32 mode)
     struct SoundMixerState *soundInfo = SOUND_INFO_PTR;
     u32 temp;
 
-    if (soundInfo->lockStatus != ID_NUMBER)
+    if (soundInfo->lockStatus != ID_NUMBER) {
+#ifdef PLATFORM_WIIU
+        if (WiiUM4ACtrlShouldTrace()) {
+            WIIU_M4A_CTRL_LOG("soundmode-locked #%u frame=%u mode=%08x lock=%08x chans=%u",
+                              sWiiUM4ACtrlTraceCount++, gFrameCount, mode, soundInfo->lockStatus, soundInfo->numChans);
+        }
+#endif
         return;
+    }
+
+#ifdef PLATFORM_WIIU
+    u8 oldNumChans = soundInfo->numChans;
+    u8 oldMasterVol = soundInfo->masterVol;
+#endif
 
     soundInfo->lockStatus++;
 
@@ -445,6 +541,14 @@ void m4aSoundMode(u32 mode)
     }
 
     soundInfo->lockStatus = ID_NUMBER;
+
+#ifdef PLATFORM_WIIU
+    if (WiiUM4ACtrlShouldTrace()) {
+        WIIU_M4A_CTRL_LOG("soundmode #%u frame=%u mode=%08x chans=%u->%u master=%u->%u reverb=%u samples=%d rate=%d",
+                          sWiiUM4ACtrlTraceCount++, gFrameCount, mode, oldNumChans, soundInfo->numChans, oldMasterVol,
+                          soundInfo->masterVol, soundInfo->reverb, soundInfo->samplesPerFrame, soundInfo->sampleRate);
+    }
+#endif
 }
 
 void SoundClear(void)
@@ -569,10 +673,28 @@ void MPlayStart(struct MP2KPlayerState *mplayInfo, struct MP2KSongHeader *songHe
     u8 checkSongPriority;
     struct MP2KTrack *track;
 
-    if (mplayInfo->lockStatus != ID_NUMBER)
+    if (mplayInfo->lockStatus != ID_NUMBER) {
+#ifdef PLATFORM_WIIU
+        if (WiiUM4ACtrlShouldTrace()) {
+            WIIU_M4A_CTRL_LOG("mplay-start-locked #%u frame=%u player=%d info=%08x hdr=%08x lock=%08x status=%08x",
+                              sWiiUM4ACtrlTraceCount++, gFrameCount, WiiUM4APlayerIndex(mplayInfo),
+                              (u32)(uintptr_t)mplayInfo, (u32)(uintptr_t)songHeader, mplayInfo->lockStatus, mplayInfo->status);
+        }
+#endif
         return;
+    }
 
     checkSongPriority = mplayInfo->checkSongPriority;
+
+#ifdef PLATFORM_WIIU
+    if (WiiUM4ACtrlShouldTrace()) {
+        WIIU_M4A_CTRL_LOG("mplay-start-req #%u frame=%u player=%d info=%08x hdr=%08x cur=%08x status=%08x track0=%02x curPrio=%u newPrio=%u check=%u",
+                          sWiiUM4ACtrlTraceCount++, gFrameCount, WiiUM4APlayerIndex(mplayInfo), (u32)(uintptr_t)mplayInfo,
+                          (u32)(uintptr_t)songHeader, (u32)(uintptr_t)mplayInfo->songHeader, mplayInfo->status,
+                          mplayInfo->tracks != NULL ? mplayInfo->tracks[0].status : 0, mplayInfo->priority,
+                          songHeader != NULL ? songHeader->priority : 0, checkSongPriority);
+    }
+#endif
 
     if (!checkSongPriority
         || ((!mplayInfo->songHeader || !(mplayInfo->tracks[0].status & MPT_FLG_START))
@@ -613,6 +735,22 @@ void MPlayStart(struct MP2KPlayerState *mplayInfo, struct MP2KSongHeader *songHe
             m4aSoundMode(songHeader->reverb);
 
         mplayInfo->lockStatus = ID_NUMBER;
+#ifdef PLATFORM_WIIU
+        if (WiiUM4ACtrlShouldTrace()) {
+            WIIU_M4A_CTRL_LOG("mplay-start-ok #%u frame=%u player=%d info=%08x hdr=%08x tracks=%u pri=%u voice=%08x first=%08x",
+                              sWiiUM4ACtrlTraceCount++, gFrameCount, WiiUM4APlayerIndex(mplayInfo),
+                              (u32)(uintptr_t)mplayInfo, (u32)(uintptr_t)songHeader, songHeader->trackCount, songHeader->priority,
+                              (u32)(uintptr_t)songHeader->voicegroup,
+                              songHeader->trackCount != 0 ? (u32)(uintptr_t)songHeader->part[0] : 0);
+        }
+#endif
+#ifdef PLATFORM_WIIU
+    } else if (WiiUM4ACtrlShouldTrace()) {
+        WIIU_M4A_CTRL_LOG("mplay-start-reject #%u frame=%u player=%d info=%08x hdr=%08x cur=%08x status=%08x curPrio=%u newPrio=%u check=%u",
+                          sWiiUM4ACtrlTraceCount++, gFrameCount, WiiUM4APlayerIndex(mplayInfo),
+                          (u32)(uintptr_t)mplayInfo, (u32)(uintptr_t)songHeader, (u32)(uintptr_t)mplayInfo->songHeader,
+                          mplayInfo->status, mplayInfo->priority, songHeader->priority, checkSongPriority);
+#endif
     }
 }
 
@@ -851,6 +989,7 @@ void CgbSound(void)
     vu8 *nrx2ptr;
     vu8 *nrx3ptr;
     vu8 *nrx4ptr;
+    bool8 cgbRestartPhase;
     s32 envelopeStepTimeAndDir;
 
     // Most comparision operations that cast to s8 perform 'and' by 0xFF.
@@ -897,6 +1036,7 @@ void CgbSound(void)
                 break;
         }
 
+        cgbRestartPhase = (channels->status & SOUND_CHANNEL_SF_START) != 0;
         prevC15 = soundInfo->cgbCounter15;
         envelopeStepTimeAndDir = *nrx2ptr;
 
@@ -919,10 +1059,10 @@ void CgbSound(void)
                     case 3:
                         if (channels->wav != channels->current) {
                             *nrx0ptr = 0x40;
-                            REG_WAVE_RAM0 = ((u32 *)channels->wav)[0];
-                            REG_WAVE_RAM1 = ((u32 *)channels->wav)[1];
-                            REG_WAVE_RAM2 = ((u32 *)channels->wav)[2];
-                            REG_WAVE_RAM3 = ((u32 *)channels->wav)[3];
+                            REG_WAVE_RAM0 = CgbWaveRamU32((const u8 *)channels->wav + 0x0);
+                            REG_WAVE_RAM1 = CgbWaveRamU32((const u8 *)channels->wav + 0x4);
+                            REG_WAVE_RAM2 = CgbWaveRamU32((const u8 *)channels->wav + 0x8);
+                            REG_WAVE_RAM3 = CgbWaveRamU32((const u8 *)channels->wav + 0xC);
                             channels->current = channels->wav;
 #if !PLATFORM_GBA
                             cgb_set_wavram();
@@ -1062,6 +1202,7 @@ void CgbSound(void)
     envelope_complete:
         /* 3. apply pitch to HW registers */
         if (channels->data.cgb.cgbStatus & CGB_CHANNEL_MO_PIT) {
+#if PLATFORM_GBA
             if (ch < 4 && (channels->type & TONEDATA_TYPE_FIX)) {
                 int dac_pwm_rate = REG_SOUNDBIAS_H;
 
@@ -1070,12 +1211,13 @@ void CgbSound(void)
                 else if (dac_pwm_rate < 0x80) // if PWM rate = 65536 Hz
                     channels->data.cgb.freq = (channels->data.cgb.freq + 1) & 0x7fe;
             }
+#endif
 
             if (ch != 4)
                 *nrx3ptr = channels->data.cgb.freq;
             else
                 *nrx3ptr = (*nrx3ptr & 0x08) | channels->data.cgb.freq;
-            channels->data.cgb.nrx4 = (channels->data.cgb.nrx4 & 0xC0) + (*((u8 *)(&channels->data.cgb.freq) + 1));
+            channels->data.cgb.nrx4 = (channels->data.cgb.nrx4 & 0xC0) + CgbFreqHighByte(channels->data.cgb.freq);
             *nrx4ptr = (s8)(channels->data.cgb.nrx4 & mask);
         }
 
@@ -1099,7 +1241,7 @@ void CgbSound(void)
 #if !PLATFORM_GBA
             cgb_set_envelope(ch - 1, *nrx2ptr);
             cgb_toggle_length(ch - 1, (*nrx4ptr & 0x40));
-            cgb_trigger_note(ch - 1);
+            cgb_trigger_note_ex(ch - 1, cgbRestartPhase);
 #endif
         }
 

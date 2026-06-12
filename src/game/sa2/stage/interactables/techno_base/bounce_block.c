@@ -52,12 +52,22 @@ static const u16 sTecBasBlockSfx[] = {
 
 void CreateEntity_BounceBlock(MapEntity *me, u16 spriteRegionX, u16 spriteRegionY, u8 spriteY)
 {
-    Task *t = TaskCreate(Task_NoteBlock, sizeof(Sprite_TecBaseNoteBlock), 0x2010, 0, TaskDestructor_NoteBlock);
-    Sprite_TecBaseNoteBlock *noteBlock = TASK_DATA(t);
-    Sprite *s = &noteBlock->s;
+    u8 blockType = me->d.uData[0];
+    Task *t;
+    Sprite_TecBaseNoteBlock *noteBlock;
+    Sprite *s;
+
+    if (blockType >= ARRAY_COUNT(sNoteBlockAssets) || blockType >= ARRAY_COUNT(gUnknown_080E001A) || blockType >= ARRAY_COUNT(sTecBasBlockSfx)) {
+        SET_MAP_ENTITY_INITIALIZED(me);
+        return;
+    }
+
+    t = TaskCreate(Task_NoteBlock, sizeof(Sprite_TecBaseNoteBlock), 0x2010, 0, TaskDestructor_NoteBlock);
+    noteBlock = TASK_DATA(t);
+    s = &noteBlock->s;
     noteBlock->unk44 = 0;
     noteBlock->unk48 = 0;
-    noteBlock->unk4C = me->d.uData[0];
+    noteBlock->unk4C = blockType;
 
     noteBlock->base.regionX = spriteRegionX;
     noteBlock->base.regionY = spriteRegionY;

@@ -8,6 +8,115 @@
 #include "lib/m4a/m4a.h"
 #include "platform/platform.h"
 
+static inline u16 ReadBackgroundTileEntry(const void *ptr);
+static inline u16 ReadBackgroundSourceTileEntry(const void *ptr, bool32 sourceIsRawByteTilemap);
+static inline void CopyBackgroundTileEntries(void *dest, const void *src, u32 bytes, u32 bytesPerTileIndex,
+                                             bool32 sourceIsRawByteTilemap);
+
+#ifdef PLATFORM_WIIU
+#include <coreinit/debug.h>
+#include "platform/shared/ppc_memory.h"
+#if (GAME == GAME_SA1)
+#include "constants/sa1/tilemaps.h"
+#elif (GAME == GAME_SA2)
+#include "constants/sa2/tilemaps.h"
+#endif
+
+#define WIIU_BG_TRACE_LIMIT       128
+#define WIIU_BG_LEVEL_TRACE_LIMIT 192
+#define WIIU_BG_LOG(fmt, ...) OSReport("[sa2-wiiu][bg] " fmt "\n", ##__VA_ARGS__)
+
+static u32 sWiiUBgTraceCount = 0;
+static u32 sWiiUBgLevelTraceCount = 0;
+
+static bool32 WiiUBgShouldTrace(void)
+{
+    return sWiiUBgTraceCount < WIIU_BG_TRACE_LIMIT;
+}
+
+static bool32 WiiUBgIsTitleLogoTilemap(u16 tilemapId)
+{
+#if (GAME == GAME_SA2)
+    return tilemapId == TM_SA2_LOGO_JP || tilemapId == TM_SA2_LOGO_EN;
+#else
+    return FALSE;
+#endif
+}
+
+static bool32 WiiUBgIsRawByteTilemap(u16 tilemapId)
+{
+#if (GAME == GAME_SA1)
+    if ((tilemapId <= TM_LEVEL_BG(17)) && ((tilemapId % 3) == 2))
+        return TRUE;
+
+    return FALSE;
+#elif (GAME == GAME_SA2)
+    switch (tilemapId) {
+        case TM_SA1_TITLE_LOGO:
+        case TM_SA2_TITLE_LOGO_JP:
+        case TM_SPECIAL_STAGE_1:
+        case TM_SPECIAL_STAGE_2:
+        case TM_SPECIAL_STAGE_3:
+        case TM_SPECIAL_STAGE_4:
+        case TM_SPECIAL_STAGE_5:
+        case TM_SPECIAL_STAGE_6:
+        case TM_SPECIAL_STAGE_7:
+        case TM_INTRO_WATER:
+        case TM_SA2_LOGO_JP:
+        case TM_SA2_LOGO_EN:
+        case TM_EXTRA_BOSS_COCKPIT:
+            return TRUE;
+    }
+
+    return FALSE;
+#else
+    return FALSE;
+#endif
+}
+
+static void WiiUBgTraceOutOfBoundsChunk(const Background *bg, u32 bgId, s32 chunkX, s32 chunkY, u32 mtIndex)
+{
+    if (WiiUBgShouldTrace()) {
+        WIIU_BG_LOG("chunk-oob #%u frame=%u bg=%u tilemap=%u chunk=(%d,%d) map=%ux%u mt=%u scroll=%u,%u target=%ux%u",
+                    sWiiUBgTraceCount++, gFrameCount, bgId, bg->tilemapId, chunkX, chunkY, bg->mapWidth, bg->mapHeight,
+                    mtIndex, bg->scrollX, bg->scrollY, bg->targetTilesX, bg->targetTilesY);
+    }
+}
+
+static bool32 WiiUBgShouldTraceLevelCopy(const Background *bg)
+{
+    if (!(bg->flags & BACKGROUND_FLAG_IS_LEVEL_MAP))
+        return FALSE;
+
+    return sWiiUBgLevelTraceCount < WIIU_BG_LEVEL_TRACE_LIMIT;
+}
+
+static void WiiUBgTraceLevelCopy(const Background *bg, u32 bgId, const char *phase, s32 chunkX, s32 chunkY, s32 localX, s32 localY,
+                                 u32 rawMtIndex, u32 mtIndex, u32 copyBytes, u32 copyRows, const void *dmaSrc, const void *dmaDest)
+{
+    if (WiiUBgShouldTraceLevelCopy(bg)) {
+        u16 first[4] = { 0, 0, 0, 0 };
+        u32 srcOffset = (u32)((uintptr_t)dmaSrc - (uintptr_t)bg->layout);
+        u32 destOffset = (u32)((uintptr_t)dmaDest - (uintptr_t)bg->layoutVram);
+
+        for (u32 i = 0; i < ARRAY_COUNT(first) && ((i + 1) * sizeof(u16)) <= copyBytes; i++)
+            first[i] = ReadBackgroundSourceTileEntry((const u8 *)dmaSrc + (i * sizeof(u16)),
+                                                     WiiUBgIsRawByteTilemap(bg->tilemapId));
+
+        WIIU_BG_LOG("level-copy #%u frame=%u %s bg=%u tilemap=%u cnt=%04x disp=%04x scroll=%u,%u chunk=(%d,%d) local=(%d,%d) rawMt=%04x mt=%u bytes=%u rows=%u srcOff=%u dstOff=%u first=%04x,%04x,%04x,%04x",
+                    sWiiUBgLevelTraceCount++, gFrameCount, phase, bgId, bg->tilemapId, gBgCntRegs[bgId], gDispCnt, bg->scrollX,
+                    bg->scrollY, chunkX, chunkY, localX, localY, rawMtIndex, mtIndex, copyBytes, copyRows, srcOffset, destOffset,
+                    first[0], first[1], first[2], first[3]);
+    }
+}
+#else
+#define WiiUBgShouldTrace() 0
+#define WiiUBgIsTitleLogoTilemap(tilemapId) 0
+#define WiiUBgIsRawByteTilemap(tilemapId) 0
+#define WiiUBgTraceOutOfBoundsChunk(bg, bgId, chunkX, chunkY, mtIndex) ((void)0)
+#define WiiUBgTraceLevelCopy(bg, bgId, phase, chunkX, chunkY, localX, localY, rawMtIndex, mtIndex, copyBytes, copyRows, dmaSrc, dmaDest) ((void)0)
+#endif
+
 static AnimCmdResult animCmd_GetTiles_BG(void *, Sprite *);
 static AnimCmdResult animCmd_GetPalette_BG(void *, Sprite *);
 static AnimCmdResult animCmd_JumpBack_BG(void *, Sprite *);
@@ -30,6 +139,59 @@ const AnimationCommandFunc animCmdTable_BG[12] = {
 #define ReadInstruction(script, cursor) ((void *)(script) + (cursor * sizeof(s32)))
 
 #define CastPointer(ptr, index) (void *)&(((u8 *)(ptr))[(index)])
+
+static inline u16 ReadBackgroundTileEntry(const void *ptr)
+{
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+    return PpcLoadU16LE(ptr);
+#else
+    return *(const u16 *)ptr;
+#endif
+}
+
+static inline u16 ReadBackgroundSourceTileEntry(const void *ptr, bool32 sourceIsRawByteTilemap)
+{
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+    if (sourceIsRawByteTilemap)
+        return ReadBackgroundTileEntry(ptr);
+#endif
+
+    return *(const u16 *)ptr;
+}
+
+static inline void WriteBackgroundTileEntry(void *ptr, u16 value)
+{
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+    PpcStoreU16LE(ptr, value);
+#else
+    *(u16 *)ptr = value;
+#endif
+}
+
+static inline void CopyBackgroundTileEntries(void *dest, const void *src, u32 bytes, u32 bytesPerTileIndex,
+                                             bool32 sourceIsRawByteTilemap)
+{
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+    if (bytesPerTileIndex == sizeof(u16)) {
+        const u8 *srcBytes = src;
+        u8 *destBytes = dest;
+        u32 offset;
+
+        for (offset = 0; offset < bytes; offset += sizeof(u16)) {
+            WriteBackgroundTileEntry(destBytes + offset, ReadBackgroundSourceTileEntry(srcBytes + offset, sourceIsRawByteTilemap));
+        }
+
+        return;
+    }
+#endif
+
+    DmaCopy16(3, src, dest, bytes);
+}
+
+static inline u32 ReadBackgroundMetatileIndex(const MetatileIndexType *ptr)
+{
+    return *ptr;
+}
 
 void DrawBackground(Background *background)
 {
@@ -68,6 +230,20 @@ void DrawBackground(Background *background)
         background->mapHeight = mapHeader->mapHeight;
     }
 
+#ifdef PLATFORM_WIIU
+    if ((background->flags & BACKGROUND_FLAG_IS_LEVEL_MAP) || WiiUBgIsTitleLogoTilemap(background->tilemapId)) {
+        if (WiiUBgShouldTrace()) {
+            u32 bgId = background->flags & BACKGROUND_FLAGS_MASK_BG_ID;
+            WIIU_BG_LOG("draw #%u frame=%u bg=%u tilemap=%u flags=%04x cnt=%04x disp=%04x tiles=%ux%u target=%ux%u map=%ux%u gfx=%u pal=%u layout=%08x mapPtr=%08x vram=%08x dest=%08x",
+                        sWiiUBgTraceCount++, gFrameCount, bgId, background->tilemapId, background->flags, gBgCntRegs[bgId],
+                        gDispCnt, background->xTiles, background->yTiles, background->targetTilesX, background->targetTilesY,
+                        background->mapWidth, background->mapHeight, background->graphics.size, mapHeader->tileset.palLength,
+                        (u32)(uintptr_t)background->layout, (u32)(uintptr_t)background->metatileMap,
+                        (u32)(uintptr_t)background->layoutVram, (u32)(uintptr_t)background->graphics.dest);
+        }
+    }
+#endif
+
     ADD_TO_BACKGROUNDS_QUEUE(background);
 }
 
@@ -94,8 +270,9 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
     s32 i;
     s32 j;
     u16 k;
+    bool32 sourceIsRawByteTilemap;
 
-#if (RENDERER == RENDERER_OPENGL)
+#if !PLATFORM_GBA && defined(USE_PLATFORM_RENDERER)
     // TEMP
     Platform_ProcessBackgroundsCopyQueue();
     return TRUE;
@@ -123,6 +300,7 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
         }
         // NOTE: register r4 = sp00
         sp00 = bg->xTiles;
+        sourceIsRawByteTilemap = WiiUBgIsRawByteTilemap(bg->tilemapId);
 
         bgId = (bg->flags & BACKGROUND_FLAGS_MASK_BG_ID);
         if (bgId >= 2 && (gDispCnt & (DISPCNT_MODE_1 | DISPCNT_MODE_2)) > DISPCNT_MODE_0) {
@@ -183,7 +361,9 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
 
                             // _08002C9A
                             for (k = 0; k < bg->targetTilesX; k++) {
-                                r7[k] = (*(r4Ptr - k) ^ TileMask_FlipXY);
+                                WriteBackgroundTileEntry(&r7[k],
+                                                         ReadBackgroundSourceTileEntry(r4Ptr - k, sourceIsRawByteTilemap)
+                                                             ^ TileMask_FlipXY);
                             }
 
                             r7 = CastPointer(r7, sp0C);
@@ -199,7 +379,9 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
                         // _08002D08
                         while (r5-- != 0) {
                             for (k = 0; k < bg->targetTilesX; k++) {
-                                r7[k] = (*(r4Ptr - k) ^ TileMask_FlipX);
+                                WriteBackgroundTileEntry(&r7[k],
+                                                         ReadBackgroundSourceTileEntry(r4Ptr - k, sourceIsRawByteTilemap)
+                                                             ^ TileMask_FlipX);
                             }
 
                             r7 = CastPointer(r7, sp0C);
@@ -224,7 +406,8 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
                             sb = sp00 * bytesPerTileIndex;
 
                             for (i = 0; i < bg->targetTilesX; i++) {
-                                r7[i] = r4Ptr[i] ^ 0x800;
+                                WriteBackgroundTileEntry(&r7[i],
+                                                         ReadBackgroundSourceTileEntry(&r4Ptr[i], sourceIsRawByteTilemap) ^ 0x800);
                             }
 
                             r7 = CastPointer(r7, sp0C);
@@ -246,8 +429,9 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
                             while (r5-- != 0) {
                                 // _08002E1C
                                 // r7 <- bytesPerTileIndex
-                                DmaCopy16(3, r4Ptr, r7, sb);
-                                DmaCopy16(3, CastPointer(r4Ptr, sb), CastPointer(r7, sp04), vR2);
+                                CopyBackgroundTileEntries(r7, r4Ptr, sb, bytesPerTileIndex, sourceIsRawByteTilemap);
+                                CopyBackgroundTileEntries(CastPointer(r7, sp04), CastPointer(r4Ptr, sb), vR2,
+                                                          bytesPerTileIndex, sourceIsRawByteTilemap);
 
                                 r7 = CastPointer(r7, sp0C);
                                 r4Ptr = CastPointer(r4Ptr, (sp00 * bytesPerTileIndex));
@@ -269,7 +453,8 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
                             // r7 =
                             while (r5-- != 0) {
                                 // _08002EA4
-                                DmaCopy16(3, r4Ptr, r7, (s32)(bg->targetTilesX * bytesPerTileIndex));
+                                CopyBackgroundTileEntries(r7, r4Ptr, bg->targetTilesX * bytesPerTileIndex,
+                                                          bytesPerTileIndex, sourceIsRawByteTilemap);
                                 r7 = CastPointer(r7, sp0C);
                                 r4Ptr = CastPointer(r4Ptr, sp00 * bytesPerTileIndex);
                             }
@@ -328,17 +513,31 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
                         u32 v;
                         s32 r4 = sp14 + j;
                         s32 result = Div(r4, bg->yTiles);
+                        s32 chunkY = result;
+                        s32 chunkX = sp18;
+                        u32 rawMtIndex = 0;
+                        u32 mtIndex = 0;
                         r4 -= result * bg->yTiles;
                         r5 = bg->yTiles - r4;
 
-                        result *= bg->mapWidth;
-                        r2Ptr = (void *)bg->metatileMap;
-                        temp2 = sp18 << 1;
-                        r0Ptr = CastPointer(r2Ptr, result * 2);
-                        r1Ptr = CastPointer(r0Ptr, temp2);
+                        {
+                            result *= bg->mapWidth;
+                            r2Ptr = (void *)bg->metatileMap;
+                            temp2 = sp18 << 1;
+                            r0Ptr = CastPointer(r2Ptr, result * 2);
+                            r1Ptr = CastPointer(r0Ptr, temp2);
 
-                        // r1 = v
-                        v = *((u16 *)r1Ptr) * bg->xTiles * bg->yTiles;
+                            if ((chunkX >= 0) && (chunkX < bg->mapWidth) && (chunkY >= 0) && (chunkY < bg->mapHeight)) {
+                                rawMtIndex = ReadBackgroundMetatileIndex((const MetatileIndexType *)r1Ptr);
+                            } else {
+                                WiiUBgTraceOutOfBoundsChunk(bg, bgId, chunkX, chunkY, 0);
+                            }
+                            mtIndex = rawMtIndex;
+                            mtIndex &= TileMask_Index;
+
+                            // r1 = v
+                            v = mtIndex * bg->xTiles * bg->yTiles;
+                        }
                         v += r4 * bg->xTiles + sp1C;
                         v *= bytesPerTileIndex;
 
@@ -352,15 +551,21 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
                             dmaDest = CastPointer(r0, i * bytesPerTileIndex);
                         }
 
-                        j += r5;
+                        {
+                            s32 nextJ = j + r5;
+                            if (r5 > r8)
+                                r5 = r8;
 
-                        if (r5 > r8)
-                            r5 = r8;
+                            WiiUBgTraceLevelCopy(bg, bgId, "full", chunkX, chunkY, sp1C, r4, rawMtIndex, mtIndex, sp20, r5,
+                                                 dmaSrc, dmaDest);
+
+                            j = nextJ;
+                        }
 
                         r8 -= r5;
 
                         while (r5-- != 0) {
-                            DmaCopy16(3, dmaSrc, dmaDest, (s32)sp20);
+                            CopyBackgroundTileEntries(dmaDest, dmaSrc, sp20, bytesPerTileIndex, sourceIsRawByteTilemap);
                             dmaDest += sp0C;
                             dmaSrc += sp00 * bytesPerTileIndex;
                         }
@@ -426,7 +631,10 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
                                     u32 mask = TileMask_FlipXY;
                                     // _08003126
                                     sp3C = &r7Ptr[k];
-                                    *sp3C = (r4Ptr[0 - k] ^ mask);
+                                    WriteBackgroundTileEntry(sp3C,
+                                                             ReadBackgroundSourceTileEntry(&r4Ptr[0 - k],
+                                                                                           sourceIsRawByteTilemap)
+                                                                 ^ mask);
                                 }
                             }
                         } else {
@@ -446,7 +654,10 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
                                 for (k = 0; k < bg->targetTilesX; k++) {
                                     // _0800319E
                                     sp3C = &r7Ptr[k];
-                                    *sp3C = (r4Ptr[0 - k] ^ TileMask_FlipX);
+                                    WriteBackgroundTileEntry(sp3C,
+                                                             ReadBackgroundSourceTileEntry(&r4Ptr[0 - k],
+                                                                                           sourceIsRawByteTilemap)
+                                                                 ^ TileMask_FlipX);
                                 }
                             }
                         }
@@ -457,14 +668,16 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
                             u32 index = ((sp14 + r5) - 1) * bg->xTiles;
                             u16 *r0Ptr = (u16 *)&((u8 *)bg->layout)[index * bytesPerTileIndex];
                             u32 index2 = sp10;
-                            u16 *r4Ptr = &r0Ptr[index2 * bytesPerTileIndex];
+                            u16 *r4Ptr = CastPointer(r0Ptr, index2 * bytesPerTileIndex);
 
                             while (r5-- != 0) {
                                 u16 k;
 
                                 for (k = 0; k < bg->targetTilesX; k++) {
                                     sp3C = &r7Ptr[k];
-                                    *sp3C = r4Ptr[k] ^ TileMask_FlipY;
+                                    WriteBackgroundTileEntry(sp3C,
+                                                             ReadBackgroundSourceTileEntry(&r4Ptr[k], sourceIsRawByteTilemap)
+                                                                 ^ TileMask_FlipY);
                                 }
                                 r7Ptr = CastPointer(r7Ptr, sp0C);
                                 r4Ptr = (void *)(((u8 *)r4Ptr) - sp00 * bytesPerTileIndex);
@@ -474,16 +687,17 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
                             u32 index = (sp14 * bg->xTiles);
                             u16 *r0Ptr = CastPointer(bg->layout, index * bytesPerTileIndex);
                             u32 index2 = sp10;
-                            u16 *r4Ptr = CastPointer(r0Ptr, index2 * bg->xTiles);
+                            u16 *r4Ptr = CastPointer(r0Ptr, index2 * bytesPerTileIndex);
 
                             // _08003298
                             while (r5-- != 0) {
                                 s32 var = r2 - 1;
-                                DmaCopy16(3, r4Ptr, r7Ptr, (s32)({
-                                              dmaSize = bg->targetTilesX - var;
-                                              dmaSize *= bytesPerTileIndex;
-                                              dmaSize;
-                                          }));
+                                CopyBackgroundTileEntries(r7Ptr, r4Ptr, ({
+                                                              dmaSize = bg->targetTilesX - var;
+                                                              dmaSize *= bytesPerTileIndex;
+                                                              dmaSize;
+                                                          }),
+                                                          bytesPerTileIndex, sourceIsRawByteTilemap);
 
                                 r7Ptr = CastPointer(r7Ptr, sp0C);
                                 r4Ptr = CastPointer(r4Ptr, sp00 * bytesPerTileIndex);
@@ -507,7 +721,10 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
 
                                 while (--r5 != (u16)-1) {
                                     for (k = 0; k < bg->targetTilesX; k++) {
-                                        r7Ptr[k] = *(r4Ptr - k) ^ TileMask_FlipXY;
+                                        WriteBackgroundTileEntry(&r7Ptr[k],
+                                                                 ReadBackgroundSourceTileEntry(r4Ptr - k,
+                                                                                               sourceIsRawByteTilemap)
+                                                                     ^ TileMask_FlipXY);
                                     }
                                     r7Ptr = CastPointer(r7Ptr, sp0C);
                                     r4Ptr = (u16 *)(((u8 *)r4Ptr) - sp00 * bytesPerTileIndex);
@@ -523,7 +740,10 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
 
                                 while (--r5 != (u16)-1) {
                                     for (k = 0; k < bg->targetTilesX; k++) {
-                                        r7Ptr[k] = *(r4Ptr - k) ^ TileMask_FlipX;
+                                        WriteBackgroundTileEntry(&r7Ptr[k],
+                                                                 ReadBackgroundSourceTileEntry(r4Ptr - k,
+                                                                                               sourceIsRawByteTilemap)
+                                                                     ^ TileMask_FlipX);
                                     }
                                     r7Ptr = CastPointer(r7Ptr, sp0C);
                                     r4Ptr = CastPointer(r4Ptr, sp00 * bytesPerTileIndex);
@@ -540,7 +760,10 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
                                 while (--r5 != (u16)-1) {
                                     for (k = 0; k < r2; k++) {
                                         u16 *sp3C = &r7Ptr[k];
-                                        *sp3C = r4Ptr[k] ^ TileMask_FlipY;
+                                        WriteBackgroundTileEntry(sp3C,
+                                                                 ReadBackgroundSourceTileEntry(&r4Ptr[k],
+                                                                                               sourceIsRawByteTilemap)
+                                                                     ^ TileMask_FlipY);
                                     }
                                     r7Ptr = CastPointer(r7Ptr, sp0C);
                                     r4Ptr = (u16 *)(((u8 *)r4Ptr) - sp00 * bytesPerTileIndex);
@@ -553,7 +776,8 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
                                 while (r5-- != 0) {
                                     dmaSize = bytesPerTileIndex * r2;
                                     // _08003492
-                                    DmaCopy16(3, r4Ptr, r7Ptr, (s32)dmaSize);
+                                    CopyBackgroundTileEntries(r7Ptr, r4Ptr, dmaSize, bytesPerTileIndex,
+                                                              sourceIsRawByteTilemap);
 
                                     r7Ptr = CastPointer(r7Ptr, sp0C);
                                     r4Ptr = CastPointer(r4Ptr, sp00 * bytesPerTileIndex);
@@ -590,6 +814,7 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
                             // _08003542
                             s32 divident = sp14 + j;
                             s32 yPos = Div(divident, bg->yTiles);
+                            s32 chunkY = yPos;
                             s32 new_r4 = divident - (yPos * bg->yTiles);
                             s32 r5 = bg->yTiles - new_r4;
                             yPos *= bg->mapWidth;
@@ -597,15 +822,15 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
                             { // _0800355C
                                 s32 metatileIndex;
                                 s32 otherVal;
-                                s32 mtIndex = *(&bg->metatileMap[yPos] + sp24);
-#if NON_MATCHING
-                                // TEMP: Crash-Fix
-                                // 1024: 2^10, max. metatile num
-                                // the other 6 bits in a metatile index are used for tile flipping and the palette
-                                if (mtIndex >= 1024) {
-                                    mtIndex = 0;
+                                u32 rawMtIndex = 0;
+                                u32 mtIndex = 0;
+                                if ((sp24 >= 0) && (sp24 < bg->mapWidth) && (chunkY >= 0) && (chunkY < bg->mapHeight)) {
+                                    rawMtIndex = ReadBackgroundMetatileIndex(&bg->metatileMap[yPos + sp24]);
+                                } else {
+                                    WiiUBgTraceOutOfBoundsChunk(bg, bgId, sp24, chunkY, 0);
                                 }
-#endif
+                                mtIndex = rawMtIndex;
+                                mtIndex &= TileMask_Index;
                                 metatileIndex = mtIndex * bg->xTiles * bg->yTiles;
 
                                 otherVal = new_r4 * bg->xTiles;
@@ -621,19 +846,26 @@ NONMATCH("asm/non_matching/engine/sa2__sub_8002B20.inc", bool32 SA2_LABEL(sub_80
                                     dmaSrc = CastPointer(bg->layout, otherVal * bytesPerTileIndex);
                                     destPtr = CastPointer(bg->layoutVram, bg->unk24);
                                     destPtr += sp0C * j;
-                                    destPtr += +bg->unk22;
+                                    destPtr += bg->unk22;
                                     dmaDest = CastPointer(destPtr, i * bytesPerTileIndex);
 
-                                    j += r5;
+                                    {
+                                        s32 nextJ = j + r5;
+                                        if (r5 > r8)
+                                            r5 = r8;
 
-                                    if (r5 > r8)
-                                        r5 = r8;
+                                        WiiUBgTraceLevelCopy(bg, bgId, "scroll", sp24, chunkY, sp28, new_r4, rawMtIndex, mtIndex,
+                                                             sp2C, r5, dmaSrc, dmaDest);
+
+                                        j = nextJ;
+                                    }
                                     r8 -= r5;
 
                                     // _080035A4
                                     while (r5-- != 0) {
                                         dmaSize = sp2C;
-                                        DmaCopy16(3, dmaSrc, dmaDest, (s32)dmaSize);
+                                        CopyBackgroundTileEntries(dmaDest, dmaSrc, dmaSize, bytesPerTileIndex,
+                                                                  sourceIsRawByteTilemap);
                                         dmaDest += sp0C;
                                         dmaSrc += sp00 * bytesPerTileIndex;
                                     }

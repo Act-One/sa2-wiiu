@@ -56,10 +56,20 @@ const TileInfo sBoosterAnimationData[2][6] = {
 
 void CreateEntity_Booster(MapEntity *me, u16 spriteRegionX, u16 spriteRegionY, u8 spriteY)
 {
-    Task *t = TaskCreate(Task_Interactable_Booster, sizeof(Sprite_Booster), 0x2000, 0, TaskDestructor_EntityShared);
-    Sprite_Booster *booster = TASK_DATA(t);
-    Sprite *s = &booster->s;
+    s32 boosterKind = me->d.sData[0];
+    Task *t;
+    Sprite_Booster *booster;
+    Sprite *s;
     u32 value;
+
+    if (boosterKind < 0 || boosterKind >= ARRAY_COUNT(sBoosterAnimationData[0])) {
+        SET_MAP_ENTITY_INITIALIZED(me);
+        return;
+    }
+
+    t = TaskCreate(Task_Interactable_Booster, sizeof(Sprite_Booster), 0x2000, 0, TaskDestructor_EntityShared);
+    booster = TASK_DATA(t);
+    s = &booster->s;
 
     booster->base.regionX = spriteRegionX;
     booster->base.regionY = spriteRegionY;
@@ -77,9 +87,9 @@ void CreateEntity_Booster(MapEntity *me, u16 spriteRegionX, u16 spriteRegionY, u
 
     SET_MAP_ENTITY_INITIALIZED(me);
 
-    s->graphics.dest = VramMalloc(sBoosterAnimationData[value][me->d.sData[0]].numTiles);
-    s->graphics.anim = sBoosterAnimationData[value][me->d.sData[0]].anim;
-    s->variant = sBoosterAnimationData[value][me->d.sData[0]].variant;
+    s->graphics.dest = VramMalloc(sBoosterAnimationData[value][boosterKind].numTiles);
+    s->graphics.anim = sBoosterAnimationData[value][boosterKind].anim;
+    s->variant = sBoosterAnimationData[value][boosterKind].variant;
     s->oamFlags = SPRITE_OAM_ORDER(18);
     s->graphics.size = 0;
     s->animCursor = 0;

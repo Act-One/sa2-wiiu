@@ -38,10 +38,12 @@
 #else
 #if (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
 #undef PALETTE
+#undef PLAY_SOUND
 #undef HITBOX
 #undef TRANSLATE
 #undef CHANGE_ANIM
 #define PALETTE(num, count, offset) ANIM_CMD__PALETTE, num, (((u16)count << 16) | ((u16)offset << 0)),
+#define PLAY_SOUND(id)            ANIM_CMD__PLAY_SOUND, (((u16)id << 16)),
 #define HITBOX(index, left, top, right, bottom)                                                                                            \
     ANIM_CMD__HITBOX, index, (((left & 0xFF) << 24) | ((top & 0xFF) << 16) | ((right & 0xFF) << 8) | ((bottom & 0xFF) << 0)),
 #define TRANSLATE(x, y)            ANIM_CMD__TRANSLATE, (((u16)x << 16) | ((u16)y << 0)),

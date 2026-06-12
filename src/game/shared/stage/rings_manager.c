@@ -22,10 +22,23 @@
 #include "constants/sa2/animations.h"
 #endif
 
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+#include "platform/shared/ppc_memory.h"
+#endif
+
 typedef struct {
     Sprite s;
     void *rings;
 } RingsManager;
+
+static inline u32 StageAssetU32(const void *data)
+{
+#if defined(PLATFORM_WIIU) && PLATFORM_WIIU
+    return PpcLoadU32LE(data);
+#else
+    return *(const u32 *)data;
+#endif
+}
 
 void Task_RingsMgrMain(void);
 void TaskDestructor_RingsMgr(Task *);
@@ -39,7 +52,8 @@ void TaskDestructor_RingsMgr(Task *);
 
 #endif
 
-#define READ_START_INDEX(p, hrc, rx, ry) (*((u32 *)((((u8 *)(p)) + (((hrc) * (ry)) * (sizeof(u32)))) + ((rx) * (sizeof(u32))))))
+#define READ_START_INDEX(p, hrc, rx, ry)                                                                                                \
+    (StageAssetU32(((const u8 *)(p)) + ((((hrc) * (ry)) + (rx)) * sizeof(u32))))
 #define DATA_START(data)                 (void *)((u8 *)(data) - (sizeof(u32) * 2))
 
 #define TO_REGION(pos) ((pos) >> 8)
@@ -138,7 +152,7 @@ void CreateStageRingsManager(void)
         t = TaskCreate(Task_RingsMgrMain, sizeof(RingsManager), 0x2000, 0, TaskDestructor_RingsMgr);
 
         compressedRingPosData = gSpritePosData_rings[gCurrentLevel];
-        dataSize = (*(u32 *)compressedRingPosData) >> 8;
+        dataSize = RLCompressedSize((const RLCompressed *)compressedRingPosData);
         ewramBuffer = EwramMalloc(dataSize);
 
         RLUnCompWram(gSpritePosData_rings[gCurrentLevel], ewramBuffer);
@@ -153,7 +167,7 @@ void CreateStageRingsManager(void)
         t = TaskCreate(Task_RingsMgrMain, sizeof(RingsManager), 0x2000, 0, NULL);
 
         compressedRingPosData = (u8 *)(*MP_COLLECT_RINGS_COMPRESSED_SIZE);
-        dataSize = (*(u32 *)compressedRingPosData) >> 8;
+        dataSize = RLCompressedSize((const RLCompressed *)compressedRingPosData);
         dataSize = (dataSize + 3) >> 2; // Make it multiple of 4
         dataSize <<= 4;
         ewramBuffer = (u32 *)(MP_COLLECT_RINGS_BUFFER + dataSize);
@@ -270,8 +284,8 @@ void Task_RingsMgrMain(void)
         dimensions = s->dimensions;
         rings++;
 
-        h_regionCount = (u16)*rings++;
-        v_regionCount = (u16)*rings++;
+        h_regionCount = (u16)StageAssetU32(rings++);
+        v_regionCount = (u16)StageAssetU32(rings++);
 
 #if (GAME == GAME_SA1)
         do

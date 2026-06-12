@@ -219,9 +219,9 @@ int main(int argc, char** argv)
     if (g_asmLabel.empty())
         g_asmLabel = BaseName(outputFilename);
 
-    if((g_commentStyle != "arm") && (g_commentStyle != "x86"))
+    if((g_commentStyle != "arm") && (g_commentStyle != "x86") && (g_commentStyle != "ppc"))
         RaiseError("comment style '%s' is not supported.\n"
-                   "Supported comment styles are: 'arm', 'x86'\n", g_commentStyle.c_str());
+                   "Supported comment styles are: 'arm', 'x86', 'ppc'\n", g_commentStyle.c_str());
 
     g_inputFile = std::fopen(inputFilename.c_str(), "rb");
 

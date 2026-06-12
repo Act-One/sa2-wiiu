@@ -1,6 +1,10 @@
 #ifndef GUARD_COLOR_H
 #define GUARD_COLOR_H
 
+#if !GEN_CTX
+#include <stdint.h>
+#endif
+
 #if PLATFORM_GBA || (RENDERER == RENDERER_SOFTWARE)
 // ABGR_1555
 typedef uint16_t ColorRaw;
